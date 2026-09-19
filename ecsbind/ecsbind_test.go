@@ -1525,3 +1525,41 @@ func TestInterface_ComponentsSnapshot(t *testing.T) {
 		t.Fatalf("Components leaked: %v", b.Components())
 	}
 }
+
+// TestGoSurface_RegistrySharedWithWorld pins the #7 contract from the public
+// surface: registering a component on the facade declares it on the shared
+// World, so host-side writes through the World's string API are legal without
+// a second registration — and a typo is still refused.
+func TestGoSurface_RegistrySharedWithWorld(t *testing.T) {
+	w := runtime.NewWorld()
+	b := ecsbind.New(w).RegisterComponent("Health", ecsHealthDesc())
+
+	if err := b.VerifyRegistry(); err != nil {
+		t.Fatalf("VerifyRegistry: %v", err)
+	}
+	if !w.RegisteredComponent("Health") {
+		t.Fatal("facade registration must declare the component on the World")
+	}
+
+	e := w.Create()
+	// Host-side write with no extra registration call.
+	if err := w.SetComponent(e, "Health", &ecsHealth{Value: 3}); err != nil {
+		t.Fatalf("host SetComponent on a facade-declared component: %v", err)
+	}
+	got, err := b.Get(e.ID().String(), "Health")
+	if err != nil {
+		t.Fatalf("facade Get: %v", err)
+	}
+	if got["Value"] != 3 {
+		t.Fatalf("facade saw Value=%v, want 3", got["Value"])
+	}
+
+	// The typo protection still applies to the shared World.
+	if err := w.SetComponent(e, "Helth", &ecsHealth{Value: 1}); err == nil {
+		t.Fatal("undeclared component name must be rejected")
+	}
+	// And the facade itself keeps rejecting names with no descriptor.
+	if _, err := b.Set(e.ID().String(), "Helth", map[string]any{"Value": 1}); err == nil {
+		t.Fatal("facade Set with an unregistered component must error")
+	}
+}

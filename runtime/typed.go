@@ -17,8 +17,22 @@ package runtime
 // Set stores v as the entity's component of the given descriptor,
 // overwriting any existing component with the same schema name.
 // Returns an error if the entity is disposed or does not exist.
+//
+// Using a Component[T] descriptor is itself a declaration of the component
+// vocabulary: Set declares c.Name() on this World before writing (see
+// type_registry.go, component-name whitelist), so hand-written components keep
+// working through the descriptor API without a separate registration call.
+// Read paths (Get/Has/Remove/Mark) never declare.
 func (w *World) Set[T any](e Entity, c Component[T], v *T) error {
-	return w.SetComponent(e, c.Name(), v)
+	return w.setDeclared(e, c.Name(), v)
+}
+
+// setDeclared is the descriptor-path write: a Component[T] descriptor is a
+// Go-level declaration of the component vocabulary, so it declares its own name
+// on this World before writing (see setComponent). Read paths (Get/Has/Remove/
+// Mark) never declare.
+func (w *World) setDeclared(e Entity, name string, data any) error {
+	return w.setComponent(e, name, data, true)
 }
 
 // Get retrieves the entity's component as *T.

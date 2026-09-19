@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"reflect"
+	"sort"
 )
 
 // SchemaTable is the schema/component table a World consumes. It is produced
@@ -66,7 +67,85 @@ func (w *World) AddRegistry(t SchemaTable) {
 			continue // idempotent re-registration
 		}
 		w.typeToName[typ] = name
+		// Declare the schema name on the World's component whitelist: the
+		// codegen table is the authoritative component vocabulary, so every
+		// name it lists is immediately usable through the string API.
+		_ = w.RegisterComponent(name)
 	}
+}
+
+// --- Component-name whitelist (declared vocabulary) ---
+//
+// A World stores components under schema names, but it does not accept
+// arbitrary names: every name must be declared on that World first. This is
+// the per-World component whitelist that makes an undeclared (typo) name an
+// explicit error at the write path instead of a permanent, silently created
+// component slot.
+//
+// Declaration sources:
+//
+//   - AddRegistry (codegen @component table),
+//   - RegisterComponent / RegisterComponents / WithComponents (explicit),
+//   - a Component[T] descriptor write: World.Set, Ref.Set, Aggregate.Attach,
+//   - ecsbind.WorldBinding.RegisterComponent (the script facade's registry).
+//
+// Declaring a name allocates no storage: the dense component ID is still
+// interned lazily on the first write (storage.go compID), so a declared but
+// unused component costs nothing.
+
+// WithComponents declares component names at World construction time:
+//
+//	w := runtime.NewWorld(runtime.WithComponents("Position", "Velocity"))
+//
+// Equivalent to calling RegisterComponents after construction. Empty names are
+// ignored.
+func WithComponents(names ...string) WorldOption {
+	return func(w *World) { w.RegisterComponents(names...) }
+}
+
+// RegisterComponent declares name on this World's component whitelist, making
+// it usable through the string-keyed API (SetComponent/GetComponent/Has/...).
+// It is idempotent and allocates no storage slot.
+//
+// Returns an error for an empty name (a nameless component cannot be
+// addressed).
+func (w *World) RegisterComponent(name string) error {
+	if name == "" {
+		return fmt.Errorf("spore/runtime: RegisterComponent requires a non-empty component name")
+	}
+	if w.compDecl == nil { // zero-value World safety; NewWorld initializes it
+		w.compDecl = make(map[string]struct{})
+	}
+	w.compDecl[name] = struct{}{}
+	return nil
+}
+
+// RegisterComponents declares each name; empty names are ignored. It is the
+// batch form used by WithComponents and by the aggregate/typed paths.
+func (w *World) RegisterComponents(names ...string) {
+	for _, name := range names {
+		_ = w.RegisterComponent(name)
+	}
+}
+
+// RegisteredComponent reports whether name has been declared on this World.
+// It is the single-source-of-truth check external registries (e.g. the
+// ecsbind script facade) use to prove they do not drift from the World.
+func (w *World) RegisteredComponent(name string) bool {
+	_, ok := w.compDecl[name]
+	return ok
+}
+
+// RegisteredComponents returns the declared component names, sorted. Names
+// that were declared but never written are included: declaration is a
+// vocabulary statement, not a storage statement.
+func (w *World) RegisteredComponents() []string {
+	out := make([]string, 0, len(w.compDecl))
+	for name := range w.compDecl {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // elem dereferences a pointer type so registration and lookups agree on both

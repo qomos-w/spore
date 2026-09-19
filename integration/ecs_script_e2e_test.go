@@ -738,7 +738,9 @@ func TestE2E_WhenChangedSurfacesBatchMutation(t *testing.T) {
 		t.Fatalf("NewRuntime: %v", err)
 	}
 	w := runtime.NewWorld()
-	bind := ecsbind.New(w).RegisterComponent("Health", e2eHealthDesc())
+	bind := ecsbind.New(w).
+		RegisterComponent("Health", e2eHealthDesc()).
+		RegisterComponent("Position", e2ePosDesc())
 	if err := bind.Bind(rt); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

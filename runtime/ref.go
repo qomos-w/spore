@@ -72,6 +72,9 @@ func (r *Ref) Mark[T any](c Component[T]) {
 // marks it changed. If the component was registered from a host field
 // (the aggregate path), the value is copied back into that field so the
 // struct view and the ECS view stay identical.
+//
+// The descriptor declares the component name on the World if it was not
+// declared yet (same contract as World.Set).
 func (r *Ref) Set[T any](c Component[T], v T) error {
 	if !r.IsAlive() {
 		return &EntityError{EntityID: r.Entity.ID(), Err: fmt.Errorf("ref not registered or entity not alive")}
@@ -80,11 +83,11 @@ func (r *Ref) Set[T any](c Component[T], v T) error {
 	w := r.Entity.world
 	data, ok := w.GetComponent(r.Entity, name)
 	if !ok {
-		return w.SetComponent(r.Entity, name, &v)
+		return w.setDeclared(r.Entity, name, &v)
 	}
 	if dst, ok := data.(*T); ok {
 		*dst = v
-		return w.SetComponent(r.Entity, name, dst)
+		return w.setDeclared(r.Entity, name, dst)
 	}
 	// Wrong pointer type stored under this name — do not silently overwrite.
 	return &EntityError{EntityID: r.Entity.ID(), Err: fmt.Errorf("component %q stored as %T, not *%T", name, data, dst_type_name[T]())}
@@ -269,9 +272,11 @@ func (a *Aggregate) Register() (Entity, error) {
 	a.ref.Entity = e
 
 	// Store field pointers as components via the existing SetComponent path
-	// so change tracking (added set) and projection see them natively.
+	// so change tracking (added set) and projection see them natively. The
+	// attachment descriptor declares the component name on the World first:
+	// Attach is an explicit host-side declaration of the component vocabulary.
 	for _, p := range attaches {
-		if err := a.world.SetComponent(e, p.name, p.ptr); err != nil {
+		if err := a.world.setDeclared(e, p.name, p.ptr); err != nil {
 			a.ref.Entity = Entity{}
 			return Entity{}, fmt.Errorf("runtime aggregate registration failed: %w", err)
 		}

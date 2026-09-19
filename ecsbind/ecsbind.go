@@ -33,6 +33,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/identity"
@@ -80,6 +81,11 @@ func New(w *runtime.World) *WorldBinding {
 // must declare every field that the runtime struct exposes; mismatch is
 // caught by binding.NewObjectBinding and surfaces as an error from Set/Get.
 //
+// Registering a name here also declares it on the underlying runtime.World
+// (runtime.World.RegisterComponent), so the binding's descriptor map and the
+// World's component whitelist can never drift: the World is the single
+// component registry, and the facade derives its half of it from this call.
+//
 // Registering the same name twice overwrites the previous descriptor;
 // this matches the runtime carrier's "one component per name" model.
 // Returns the receiver for fluent chaining: `bind.New(w).RegisterComponent(...).RegisterComponent(...)`.
@@ -88,6 +94,7 @@ func (b *WorldBinding) RegisterComponent(name string, desc schema.ObjectDesc) *W
 		panic("ecsbind: RegisterComponent requires a non-empty component name")
 	}
 	b.descs[name] = desc
+	_ = b.w.RegisterComponent(name)
 	return b
 }
 
@@ -150,6 +157,11 @@ func (b *WorldBinding) Interface() schema.InterfaceDesc {
 // the facade methods. On failure the Runtime is left untouched (the
 // underlying BindInterfaceObject rolls back on duplicate namespaces by
 // removing the prior handle, so a fresh retry is safe).
+//
+// Bind first verifies that the binding's descriptor registry has not drifted
+// from the World's component registry (see VerifyRegistry) and returns that
+// error instead of binding a facade whose component names the World would
+// reject.
 func (b *WorldBinding) Bind(rt *script.Runtime) error {
 	return b.BindAs(rt, DefaultNamespace, "World")
 }
@@ -162,7 +174,35 @@ func (b *WorldBinding) BindAs(rt *script.Runtime, namespace, name string) error 
 	if rt == nil {
 		return fmt.Errorf("ecsbind: Bind requires a non-nil script.Runtime")
 	}
+	if err := b.VerifyRegistry(); err != nil {
+		return err
+	}
 	return rt.BindInterfaceObject(namespace, name, b.Interface(), b)
+}
+
+// VerifyRegistry checks the one-way consistency invariant between the
+// binding's descriptor map and the runtime World's component registry: every
+// name the facade exposes must be declared on the World, so a script/Go write
+// through the shared World is never rejected as an undeclared component.
+//
+// The invariant holds by construction (RegisterComponent declares on both
+// sides); VerifyRegistry exists so drift introduced out of band — a descriptor
+// installed directly into the binding's map, or a World whose registry was
+// replaced — is exposed at Bind time rather than as a mysterious runtime
+// error later. The reverse direction is deliberately not checked: the World
+// may hold components that the script facade does not expose.
+func (b *WorldBinding) VerifyRegistry() error {
+	var missing []string
+	for name := range b.descs {
+		if !b.w.RegisteredComponent(name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("ecsbind: component registry drift: %d descriptor(s) registered on the binding but not declared on the runtime.World: %s (register components through WorldBinding.RegisterComponent so both registries stay in sync)", len(missing), strings.Join(missing, ", "))
 }
 
 // ----------------------------------------------------------------------------

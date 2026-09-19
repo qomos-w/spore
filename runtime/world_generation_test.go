@@ -9,7 +9,7 @@ import (
 // entity (world.go:entityState checks the handle's epoch).
 
 func TestEntityGenerationStaleAfterSweepAndReuse(t *testing.T) {
-	w := NewWorld()
+	w := NewWorld(WithComponents("Position"))
 	id := w.generateID()
 	old := w.CreateWithID(id)
 	if !w.IsAlive(old) {
@@ -82,7 +82,7 @@ func TestEntityGenerationDisposalJournalRecordsReuseOnlyOnce(t *testing.T) {
 }
 
 func TestEntityGenerationQueryHandlesResolve(t *testing.T) {
-	w := NewWorld()
+	w := NewWorld(WithComponents("Position"))
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", map[string]any{"X": 1}); err != nil {
 		t.Fatalf("SetComponent: %v", err)
