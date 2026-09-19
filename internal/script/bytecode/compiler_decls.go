@@ -1,4 +1,7 @@
-// compiler_decls.go lowers frontend AST declarations into the compiler's internal declaration forms, registers top-level type information, and dispatches top-level declaration compilation.
+// compiler_decls.go registers top-level type information, derives the compiler's
+// resolved declaration records from the frontend AST (classInfo/structInfo/
+// enumInfo/interfaceInfo + the thin adapter helpers), and dispatches top-level
+// declaration compilation. No private copy of the frontend AST is kept.
 
 package bytecode
 
@@ -10,26 +13,31 @@ import (
 	"github.com/qomos-w/spore/internal/script/frontend"
 )
 
-func (c *compiler) registerTopLevelTypeInfo(decl topLevelDecl) {
-	switch decl.kind {
-	case topLevelDeclClass:
-		c.classes[decl.class.name] = decl.class
-	case topLevelDeclStruct:
-		c.structs[decl.strct.name] = decl.strct
-	case topLevelDeclEnum:
-		c.enums[decl.enm.name] = decl.enm
-		validateEnumMembers(decl.enumAST, decl.enm, func(code, path, msg string) {
+// registerTopLevelTypeInfo performs pass-1 registration of top-level type
+// information (classes, structs, enums, function signatures and global types)
+// before any body is compiled. Adding a top-level form touches only this switch
+// and compileTopLevelDecl.
+func (c *compiler) registerTopLevelTypeInfo(stmt frontend.Statement) {
+	switch s := stmt.(type) {
+	case *frontend.ClassStmt:
+		c.classes[s.Name.Value] = classInfoFromStmt(s)
+	case *frontend.StructStmt:
+		c.structs[s.Name.Value] = structInfoFromStmt(s)
+	case *frontend.EnumStmt:
+		info := enumInfoFromStmt(s)
+		c.enums[info.name] = info
+		validateEnumMembers(s, info, func(code, path, msg string) {
 			c.addCompileError(code, path, msg)
 		})
-	case topLevelDeclFunction:
-		c.funcInfo[decl.fun.name] = &functionInfo{
-			name:       decl.fun.name,
-			paramCount: len(decl.fun.paramNames),
-			paramTypes: append([]string(nil), decl.fun.paramTypes...),
-			returnType: decl.fun.returnType,
+	case *frontend.FunStmt:
+		c.funcInfo[s.Name.Value] = &functionInfo{
+			name:       s.Name.Value,
+			paramCount: len(s.Params),
+			paramTypes: append([]string(nil), funParamTypes(s)...),
+			returnType: funReturnType(s),
 		}
-	case topLevelDeclVar:
-		c.globalTypes[decl.vr.name] = c.resolveType(decl.vr.type_)
+	case *frontend.VarStmt:
+		c.globalTypes[s.Name.Value] = c.resolveType(typeAnnotationName(s.Type_))
 	}
 }
 
@@ -201,75 +209,55 @@ func (c *compiler) normalizeClassRelationships(className string) {
 	}
 }
 
-func topLevelStmtFromStatement(stmt frontend.Statement) topLevelStmt {
-	switch s := stmt.(type) {
-	case *frontend.FunStmt:
-		return funStmtAdapter{stmt: s}
-	case *frontend.StructStmt:
-		return structStmtAdapter{stmt: s}
-	case *frontend.EnumStmt:
-		return enumStmtAdapter{stmt: s}
-	case *frontend.ClassStmt:
-		return classStmtAdapter{stmt: s}
-	case *frontend.InterfaceStmt:
-		return interfaceStmtAdapter{stmt: s}
-	case *frontend.VarStmt:
-		return varStmtAdapter{stmt: s}
-	case *frontend.ExprStatement:
-		// Top-level global assignment (ident = expr)
-		if _, ok := s.Expr.(*frontend.AssignExpr); ok {
-			return globalAssignStmtAdapter{stmt: s}
-		}
-		return nil
-	case *frontend.TypeAliasStmt:
-		return typeAliasStmtAdapter{stmt: s}
-	default:
-		return nil
+// --- Thin frontend adapters ---
+//
+// The compiler reads the frontend AST directly; these helpers derive the few
+// normalized views it needs (parameter names, parameter types, return type)
+// without storing a copy of any node. Because no private declaration mirror is
+// kept, adding a statement form requires only a case in compileStatement
+// (compiler_stmt.go) — not a new adapter type plus a conversion switch.
+
+// funParamNames returns the declared parameter names of a function or method.
+func funParamNames(fn *frontend.FunStmt) []string {
+	names := make([]string, len(fn.Params))
+	for i, p := range fn.Params {
+		names[i] = p.Name.Value
 	}
+	return names
 }
 
-func localStmtFromStatement(stmt frontend.Statement) localStmt {
-	switch s := stmt.(type) {
-	case *frontend.VarStmt:
-		return varStmtAdapterLocal{stmt: s}
-	case *frontend.ReturnStmt:
-		return returnStmtAdapter{stmt: s}
-	case *frontend.YieldStmt:
-		return yieldStmtAdapter{stmt: s}
-	case *frontend.IfStmt:
-		return ifStmtAdapter{stmt: s}
-	case *frontend.WhileStmt:
-		return whileStmtAdapter{stmt: s}
-	case *frontend.ForStmt:
-		return forStmtAdapter{stmt: s}
-	case *frontend.WhenStmt:
-		return whenStmtAdapter{stmt: s}
-	case *frontend.BreakStmt:
-		return breakStmtAdapter{}
-	case *frontend.ContinueStmt:
-		return continueStmtAdapter{}
-	case *frontend.BlockStmt:
-		return blockStmtAdapter{stmt: s}
-	case *frontend.ExprStatement:
-		return exprStmtAdapter{stmt: s}
-	case *frontend.TryStmt:
-		return tryStmtAdapter{stmt: s}
-	case *frontend.DeferStmt:
-		return deferStmtAdapter{stmt: s}
-	default:
-		return nil
+// funParamTypes returns the declared parameter type names (aliases unresolved)
+// of a function or method.
+func funParamTypes(fn *frontend.FunStmt) []string {
+	types := make([]string, len(fn.Params))
+	for i, p := range fn.Params {
+		types[i] = typeAnnotationName(p.Type_)
 	}
+	return types
 }
 
-func altStmtFromStatement(stmt frontend.Statement) altStmt {
-	switch s := stmt.(type) {
-	case *frontend.IfStmt:
-		return altIfStmtAdapter{stmt: s}
-	case *frontend.BlockStmt:
-		return altBlockStmtAdapter{stmt: s}
-	default:
-		return nil
+// funReturnType returns the declared return type name of a function or method
+// ("" when absent).
+func funReturnType(fn *frontend.FunStmt) string { return typeAnnotationName(fn.ReturnType) }
+
+// methodAccess normalizes the frontend access modifier to the compiler's.
+func methodAccess(m *frontend.FunStmt) accessModifier {
+	if m.Access != 0 {
+		return accessPrivate
 	}
+	return accessPublic
+}
+
+// methodReturnsCompatible reports whether an override's return type matches the
+// parent method's.
+func methodReturnsCompatible(method, parentMethod *frontend.FunStmt) bool {
+	return funReturnType(method) == funReturnType(parentMethod)
+}
+
+// interfaceMethodReturnType returns an interface method signature's return type
+// name ("" when absent).
+func interfaceMethodReturnType(m *frontend.MethodSignature) string {
+	return typeAnnotationName(m.ReturnType)
 }
 
 func (c *compiler) retainModuleGlobals(before map[string]string, beforeTypes map[string]string) {
@@ -325,32 +313,29 @@ func (c *compiler) qualifyModuleFunctions(modulePath string, before map[string]*
 	}
 }
 
-func topLevelDeclsFromProgram(prog *frontend.Program) []topLevelDecl {
+// topLevelStatements returns the top-level statements the compiler lowers, in
+// source order. Bare expression statements that are not global assignments have
+// no top-level meaning and are skipped, matching the historical declaration
+// filter.
+func topLevelStatements(prog *frontend.Program) []frontend.Statement {
 	if prog == nil || len(prog.Stmts) == 0 {
 		return nil
 	}
-	decls := make([]topLevelDecl, 0, len(prog.Stmts))
+	stmts := make([]frontend.Statement, 0, len(prog.Stmts))
 	for _, stmt := range prog.Stmts {
-		switch s := topLevelStmtFromStatement(stmt).(type) {
-		case funStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclFunction, fun: funDeclFromStmt(s.stmt)})
-		case structStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclStruct, strct: structInfoFromStmt(s.stmt)})
-		case enumStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclEnum, enm: enumInfoFromStmt(s.stmt), enumAST: s.stmt})
-		case classStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclClass, class: classInfoFromStmt(s.stmt)})
-		case interfaceStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclInterface, iface: interfaceInfoFromStmt(s.stmt)})
-		case globalAssignStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclGlobalAssign, globalAssign: s.stmt})
-		case varStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclVar, vr: varDeclFromStmt(s.stmt)})
-		case typeAliasStmtAdapter:
-			decls = append(decls, topLevelDecl{kind: topLevelDeclTypeAlias, typeAlias: s.stmt})
+		switch s := stmt.(type) {
+		case *frontend.FunStmt, *frontend.StructStmt, *frontend.EnumStmt,
+			*frontend.ClassStmt, *frontend.InterfaceStmt, *frontend.VarStmt,
+			*frontend.TypeAliasStmt:
+			stmts = append(stmts, stmt)
+		case *frontend.ExprStatement:
+			// Top-level global assignment (ident = expr).
+			if _, ok := s.Expr.(*frontend.AssignExpr); ok {
+				stmts = append(stmts, stmt)
+			}
 		}
 	}
-	return decls
+	return stmts
 }
 
 func collectTopLevelInterfaces(prog *frontend.Program) map[string]interfaceInfo {
@@ -367,60 +352,6 @@ func collectTopLevelInterfaces(prog *frontend.Program) map[string]interfaceInfo 
 		interfaces[info.name] = info
 	}
 	return interfaces
-}
-
-func funDeclFromStmt(fn *frontend.FunStmt) funDecl {
-	paramNames := make([]string, len(fn.Params))
-	paramTypes := make([]string, len(fn.Params))
-	for i, p := range fn.Params {
-		paramNames[i] = p.Name.Value
-		if p.Type_ != nil {
-			paramTypes[i] = typeAnnotationName(p.Type_)
-		}
-	}
-	var returnType string
-	if fn.ReturnType != nil {
-		returnType = typeAnnotationName(fn.ReturnType)
-	}
-	return funDecl{
-		name:       fn.Name.Value,
-		paramNames: paramNames,
-		paramTypes: paramTypes,
-		body:       blockDeclFromBlock(fn.Body),
-		exprBody:   fn.ExprBody,
-		returnType: returnType,
-		isStream:   fn.IsStream,
-	}
-}
-
-func methodDeclFromStmt(method *frontend.FunStmt) methodDecl {
-	paramNames := make([]string, len(method.Params))
-	paramTypes := make([]string, len(method.Params))
-	for i, p := range method.Params {
-		paramNames[i] = p.Name.Value
-		if p.Type_ != nil {
-			paramTypes[i] = typeAnnotationName(p.Type_)
-		}
-	}
-	access := accessPublic
-	if method.Access != 0 {
-		access = accessModifier(method.Access)
-	}
-	var returnType string
-	if method.ReturnType != nil {
-		returnType = typeAnnotationName(method.ReturnType)
-	}
-	return methodDecl{
-		name:       method.Name.Value,
-		paramNames: paramNames,
-		paramTypes: paramTypes,
-		body:       blockDeclFromBlock(method.Body),
-		exprBody:   method.ExprBody,
-		returnType: returnType,
-		isOpen:     method.IsOpen,
-		isOverride: method.IsOverride,
-		access:     access,
-	}
 }
 
 func typeAnnotationName(t *frontend.TypeAnnotation) string {
@@ -511,14 +442,6 @@ func validateEnumMembers(s *frontend.EnumStmt, info enumInfo, report func(code, 
 	}
 }
 
-func varDeclFromStmt(v *frontend.VarStmt) varDecl {
-	var typeName string
-	if v.Type_ != nil {
-		typeName = typeAnnotationName(v.Type_)
-	}
-	return varDecl{name: v.Name.Value, value: v.Value, type_: typeName, export: v.Exported}
-}
-
 func classInfoFromStmt(cl *frontend.ClassStmt) classInfo {
 	fields := make([]fieldInfo, len(cl.Fields))
 	for i, field := range cl.Fields {
@@ -532,10 +455,9 @@ func classInfoFromStmt(cl *frontend.ClassStmt) classInfo {
 		}
 		fields[i] = fieldInfo{name: field.Name.Value, access: access, typeName: typeName}
 	}
-	methods := make([]methodDecl, len(cl.Methods))
-	for i, method := range cl.Methods {
-		methods[i] = methodDeclFromStmt(method)
-	}
+	// Methods are kept as the frontend nodes themselves (copied into a fresh
+	// slice so interface-default synthesis can append without mutating the AST).
+	methods := append([]*frontend.FunStmt(nil), cl.Methods...)
 	var parentName string
 	if cl.Parent != nil {
 		parentName = cl.Parent.Value
@@ -555,187 +477,42 @@ func classInfoFromStmt(cl *frontend.ClassStmt) classInfo {
 }
 
 func interfaceInfoFromStmt(iface *frontend.InterfaceStmt) interfaceInfo {
-	methods := make([]interfaceMethodSig, len(iface.Methods))
-	for i, m := range iface.Methods {
-		returnType := ""
-		if m.ReturnType != nil {
-			returnType = typeAnnotationName(m.ReturnType)
-		}
-		paramNames := make([]string, len(m.Params))
-		paramTypes := make([]string, len(m.Params))
-		for j, p := range m.Params {
-			paramNames[j] = p.Name.Value
-			if p.Type_ != nil {
-				paramTypes[j] = typeAnnotationName(p.Type_)
-			}
-		}
-		methods[i] = interfaceMethodSig{
-			name:       m.Name.Value,
-			paramCount: len(m.Params),
-			returnType: returnType,
-			hasDefault: m.Body != nil,
-			paramNames: paramNames,
-			paramTypes: paramTypes,
-			body:       blockDeclFromBlock(m.Body),
-		}
-	}
+	// Method signatures are kept as the frontend nodes themselves; parameter
+	// counts, return types and default bodies are read from the signature on
+	// demand (compiler_register.go / compiler_validate.go / compiler_typedecl.go).
+	methods := append([]*frontend.MethodSignature(nil), iface.Methods...)
 	return interfaceInfo{
 		name:    iface.Name.Value,
 		methods: methods,
 	}
 }
 
-func blockDeclFromBlock(block *frontend.BlockStmt) blockDecl {
-	if block == nil || len(block.Stmts) == 0 {
-		return blockDecl{}
-	}
-	stmts := make([]stmtDecl, len(block.Stmts))
-	for i, stmt := range block.Stmts {
-		stmts[i] = stmtDeclFromStatement(localStmtFromStatement(stmt))
-	}
-	return blockDecl{stmts: stmts}
-}
-
-func ifDeclFromStmt(s *frontend.IfStmt) ifDecl {
-	decl := ifDecl{
-		condition:   s.Condition,
-		consequence: blockDeclFromBlock(s.Consequence),
-	}
-	if s.Alternative == nil {
-		return decl
-	}
-	switch alt := altStmtFromStatement(s.Alternative).(type) {
-	case altIfStmtAdapter:
-		altDecl := ifDeclFromStmt(alt.stmt)
-		decl.alternativeIf = &altDecl
-	case altBlockStmtAdapter:
-		altDecl := blockDeclFromBlock(alt.stmt)
-		decl.alternativeBlk = &altDecl
-	}
-	return decl
-}
-
-func whileDeclFromStmt(s *frontend.WhileStmt) whileDecl {
-	return whileDecl{
-		condition: s.Condition,
-		body:      blockDeclFromBlock(s.Body),
-	}
-}
-
-func forDeclFromStmt(s *frontend.ForStmt) forDecl {
-	decl := forDecl{
-		condition: s.Condition,
-		update:    s.Update,
-		body:      blockDeclFromBlock(s.Body),
-		isForIn:   s.IsForIn,
-		variable:  s.Variable,
-		iterable:  s.Iterable,
-	}
-	if s.Init != nil {
-		initDecl := stmtDeclFromStatement(localStmtFromStatement(s.Init))
-		decl.init = &initDecl
-	}
-	return decl
-}
-
-func whenDeclFromStmt(s *frontend.WhenStmt) whenDecl {
-	decl := whenDecl{
-		expr:  s.Expr,
-		cases: make([]whenCaseDecl, len(s.Cases)),
-	}
-	for i, cc := range s.Cases {
-		values := make([]frontend.Expression, len(cc.Values))
-		copy(values, cc.Values)
-		decl.cases[i] = whenCaseDecl{
-			values:       values,
-			variable:     cc.Variable,
-			typeName:     "",
-			hasTypeMatch: cc.TypeAnnotation != nil,
-			guard:        cc.Guard,
-			body:         blockDeclFromBlock(cc.Body),
-		}
-		if cc.TypeAnnotation != nil {
-			decl.cases[i].typeName = cc.TypeAnnotation.Name
-		}
-	}
-	if s.DefaultCase != nil {
-		blk := blockDeclFromBlock(s.DefaultCase)
-		decl.defaultCase = &blk
-	}
-	return decl
-}
-
-func stmtDeclFromStatement(stmt localStmt) stmtDecl {
+// compileTopLevelDecl compiles one top-level statement and emits its code into
+// the main chunk. Adding a top-level form touches only this switch (plus
+// topLevelStatements and registerTopLevelTypeInfo).
+func (c *compiler) compileTopLevelDecl(stmt frontend.Statement) {
 	switch s := stmt.(type) {
-	case varStmtAdapterLocal:
-		return stmtDecl{kind: stmtKindVar, vr: varDeclFromStmt(s.stmt)}
-	case returnStmtAdapter:
-		return stmtDecl{kind: stmtKindReturn, ret: returnDecl{value: s.stmt.Value}}
-	case yieldStmtAdapter:
-		return stmtDecl{kind: stmtKindYield, yld: yieldDecl{value: s.stmt.Value}}
-	case ifStmtAdapter:
-		return stmtDecl{kind: stmtKindIf, if_: ifDeclFromStmt(s.stmt)}
-	case whileStmtAdapter:
-		return stmtDecl{kind: stmtKindWhile, whl: whileDeclFromStmt(s.stmt)}
-	case forStmtAdapter:
-		return stmtDecl{kind: stmtKindFor, for_: forDeclFromStmt(s.stmt)}
-	case whenStmtAdapter:
-		return stmtDecl{kind: stmtKindWhen, when: whenDeclFromStmt(s.stmt)}
-	case breakStmtAdapter:
-		return stmtDecl{kind: stmtKindBreak}
-	case continueStmtAdapter:
-		return stmtDecl{kind: stmtKindContinue}
-	case blockStmtAdapter:
-		return stmtDecl{kind: stmtKindBlock, blk: blockDeclFromBlock(s.stmt)}
-	case exprStmtAdapter:
-		return stmtDecl{kind: stmtKindExpr, expr: s.stmt.Expr}
-	case tryStmtAdapter:
-		return stmtDecl{kind: stmtKindTry, try_: tryDeclFromStmt(s.stmt)}
-	case deferStmtAdapter:
-		return stmtDecl{kind: stmtKindDefer, dfr: deferDeclFromStmt(s.stmt)}
-	default:
-		return stmtDecl{}
-	}
-}
-
-func tryDeclFromStmt(s *frontend.TryStmt) tryDecl {
-	decl := tryDecl{
-		body:      blockDeclFromBlock(s.Body),
-		catchBody: blockDeclFromBlock(s.CatchBody),
-	}
-	if s.CatchVar != nil {
-		decl.catchVar = s.CatchVar.Value
-	}
-	return decl
-}
-
-func deferDeclFromStmt(s *frontend.DeferStmt) deferDecl {
-	return deferDecl{body: blockDeclFromBlock(s.Body)}
-}
-
-func (c *compiler) compileTopLevelDecl(decl topLevelDecl, isLast bool) {
-	switch decl.kind {
-	case topLevelDeclFunction:
-		c.validateSuperOutsideClass(decl.fun)
-		c.compileFunDecl(decl.fun)
-	case topLevelDeclStruct:
-		c.compileStructDecl(decl.strct)
-	case topLevelDeclEnum:
+	case *frontend.FunStmt:
+		c.validateSuperOutsideClass(s)
+		c.compileFunDecl(s)
+	case *frontend.StructStmt:
+		c.compileStructDecl(structInfoFromStmt(s))
+	case *frontend.EnumStmt:
 		// Enums are compile-time constants: registered in c.enums during
 		// pass 1 and materialized into the VM registry by registerEnums.
 		// Nothing to emit at top level.
-	case topLevelDeclClass:
-		c.compileClassDecl(decl.class)
-		c.validateClassDecl(c.classes[decl.class.name])
-	case topLevelDeclInterface:
-		c.compileInterfaceDecl(decl.iface)
-	case topLevelDeclVar:
-		c.compileVarDecl(decl.vr)
-	case topLevelDeclGlobalAssign:
-		c.compileGlobalAssign(decl.globalAssign)
-	case topLevelDeclTypeAlias:
-		if decl.typeAlias != nil {
-			c.registerTypeAlias(decl.typeAlias)
-		}
+	case *frontend.ClassStmt:
+		// Read the resolved record back from c.classes so normalized
+		// relationships and synthesized interface defaults are honored.
+		c.compileClassDecl(c.classes[s.Name.Value])
+		c.validateClassDecl(c.classes[s.Name.Value])
+	case *frontend.InterfaceStmt:
+		c.compileInterfaceDecl(c.interfaces[s.Name.Value])
+	case *frontend.VarStmt:
+		c.compileVarDecl(s)
+	case *frontend.ExprStatement:
+		c.compileGlobalAssign(s)
+	case *frontend.TypeAliasStmt:
+		c.registerTypeAlias(s)
 	}
 }

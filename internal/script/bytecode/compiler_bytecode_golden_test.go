@@ -35,8 +35,9 @@ var updateBytecodeGolden = flag.Bool("update", false, "rewrite bytecode testdata
 // type-alias/global declarations, closures, optional chaining and typed
 // arithmetic.
 var goldenPrograms = []struct {
-	name   string
-	source string
+	name       string
+	modulePath string
+	source     string
 }{
 	{
 		name: "arith_locals",
@@ -296,6 +297,20 @@ class C {
   fun make(): any { return fun(x: int): int { return x + this.base } }
 }`,
 	},
+	{
+		name:       "module_exports",
+		modulePath: "pkg/demo",
+		source: `
+export var counter: int = 1
+var hidden: int = 2
+export fun bump(): int {
+  var local: int = hidden + 1
+  return local
+}
+fun localOnly(): int { return hidden }
+class Widget { size: int }
+fun makeWidget(): Widget { return new Widget() }`,
+	},
 }
 
 // TestCompilerGoldenBytecode compiles each corpus program and compares the
@@ -319,12 +334,21 @@ func TestCompilerGoldenBytecode(t *testing.T) {
 				t.Fatalf("parse %s: %v", tc.name, err)
 			}
 			c := newCompiler()
-			main, err := c.compile(prog)
+			var main *chunk
+			if tc.modulePath != "" {
+				main, err = c.compileModule(tc.modulePath, prog)
+			} else {
+				main, err = c.compile(prog)
+			}
 			if err != nil {
 				t.Fatalf("compile %s: %v", tc.name, err)
 			}
 			got := dumpCompiledProgram(main, c.getFunctions())
-			path := filepath.Join(goldenDir, tc.name+".txt")
+			fileName := tc.name + ".txt"
+			if tc.modulePath != "" {
+				fileName = tc.name + "_module.txt"
+			}
+			path := filepath.Join(goldenDir, fileName)
 
 			if *updateBytecodeGolden {
 				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {

@@ -2,6 +2,8 @@
 
 package bytecode
 
+import "github.com/qomos-w/spore/internal/script/frontend"
+
 // --- Struct compilation ---
 
 func (c *compiler) compileStructDecl(info structInfo) {
@@ -15,7 +17,10 @@ func (c *compiler) compileClassDecl(info classInfo) {
 
 	// Compile methods as separate function chunks.
 	for _, method := range info.methods {
-		methodKey := info.name + "." + method.name
+		methodKey := info.name + "." + method.Name.Value
+		paramNames := funParamNames(method)
+		paramTypes := funParamTypes(method)
+		returnType := funReturnType(method)
 
 		savedChunk := c.chunk
 		savedLocals := c.locals
@@ -38,38 +43,38 @@ func (c *compiler) compileClassDecl(info classInfo) {
 		c.inDeferBody = 0
 
 		// Pre-compute captures for the method body (`this` included).
-		c.capturedNames, c.capturedOrder = computeFunctionCaptures(method.paramNames, method.body, true, nil)
+		c.capturedNames, c.capturedOrder = computeFunctionCaptures(paramNames, method.Body, true, nil)
 
 		// "this" as local 0.
 		c.addLocalWithType("this", info.name)
-		for i, name := range method.paramNames {
+		for i, name := range paramNames {
 			typeName := ""
-			if i < len(method.paramTypes) {
-				typeName = c.resolveType(method.paramTypes[i])
+			if i < len(paramTypes) {
+				typeName = c.resolveType(paramTypes[i])
 			}
 			c.addLocalWithType(name, typeName)
 		}
 		// Parameters captured by lambdas are boxed into cells at entry.
 		// `this` is never boxed; it is boxed at closure-creation time.
-		c.boxCapturedParams(method.paramNames)
+		c.boxCapturedParams(paramNames)
 		c.returnTypeHint = ""
 		c.currentStreamFun = false
-		if resolved := c.resolveType(method.returnType); resolved == "long" || resolved == "ulong" || resolved == "double" {
+		if resolved := c.resolveType(returnType); resolved == "long" || resolved == "ulong" || resolved == "double" {
 			c.returnTypeHint = resolved
 		}
 
-		if len(method.body.stmts) > 0 {
-			c.compileBlock(method.body)
-		} else if method.exprBody != nil {
-			c.compileExpression(method.exprBody)
+		if method.Body != nil && len(method.Body.Stmts) > 0 {
+			c.compileBlock(method.Body)
+		} else if method.ExprBody != nil {
+			c.compileExpression(method.ExprBody)
 			c.emit(opReturn, 0, c.curLine)
 			c.functions[methodKey] = c.chunk
 			c.funcInfo[methodKey] = &functionInfo{
 				name:       methodKey,
-				paramCount: len(method.paramNames) + 1,
-				paramTypes: append([]string(nil), method.paramTypes...),
+				paramCount: len(paramNames) + 1,
+				paramTypes: append([]string(nil), paramTypes...),
 				localCount: c.peakLocals,
-				returnType: method.returnType,
+				returnType: returnType,
 			}
 			c.chunk.LocalCount = c.peakLocals
 			c.chunk = savedChunk
@@ -89,10 +94,10 @@ func (c *compiler) compileClassDecl(info classInfo) {
 		c.functions[methodKey] = c.chunk
 		c.funcInfo[methodKey] = &functionInfo{
 			name:       methodKey,
-			paramCount: len(method.paramNames) + 1, // +1 for this
-			paramTypes: append([]string(nil), method.paramTypes...),
+			paramCount: len(paramNames) + 1, // +1 for this
+			paramTypes: append([]string(nil), paramTypes...),
 			localCount: c.peakLocals,
-			returnType: method.returnType,
+			returnType: returnType,
 		}
 		c.chunk.LocalCount = c.peakLocals
 
@@ -133,24 +138,26 @@ func (c *compiler) synthesizeInterfaceDefaultMethods(className string) {
 			continue // unknown_interface is reported by contract validation
 		}
 		for i := range iface.methods {
-			m := &iface.methods[i]
-			if !m.hasDefault {
+			m := iface.methods[i]
+			if m.Body == nil {
 				continue
 			}
-			if _, provided := c.lookupMethodOnAncestor(info.name, m.name); provided {
+			if _, provided := c.lookupMethodOnAncestor(info.name, m.Name.Value); provided {
 				continue // class or an ancestor already provides the method
 			}
-			if alreadySynthesized[m.name] {
+			if alreadySynthesized[m.Name.Value] {
 				continue // an earlier interface already contributed this default
 			}
-			alreadySynthesized[m.name] = true
-			info.methods = append(info.methods, methodDecl{
-				name:       m.name,
-				paramNames: m.paramNames,
-				paramTypes: m.paramTypes,
-				body:       m.body,
-				returnType: m.returnType,
-				isOpen:     true,
+			alreadySynthesized[m.Name.Value] = true
+			// Synthesize a class-method view of the interface default: the
+			// frontend signature's own AST nodes, marked open so subclasses
+			// may override the inherited default.
+			info.methods = append(info.methods, &frontend.FunStmt{
+				Name:       m.Name,
+				Params:     m.Params,
+				ReturnType: m.ReturnType,
+				Body:       m.Body,
+				IsOpen:     true,
 			})
 		}
 	}
@@ -159,20 +166,25 @@ func (c *compiler) synthesizeInterfaceDefaultMethods(className string) {
 
 // --- Var compilation ---
 
-func (c *compiler) compileVarDecl(v varDecl) {
-	c.compileVarDeclWithName(v, v.name)
+func (c *compiler) compileVarDecl(v *frontend.VarStmt) {
+	name := v.Name.Value
+	if qualified, ok := c.moduleGlobalNames[v]; ok {
+		name = qualified
+	}
+	c.compileVarDeclWithName(v, name)
 }
 
-func (c *compiler) compileVarDeclWithName(v varDecl, name string) {
+func (c *compiler) compileVarDeclWithName(v *frontend.VarStmt, name string) {
+	typeName := typeAnnotationName(v.Type_)
 	// Set type hint so literal compilation picks the right encoding.
 	prevHint := c.typeHint
-	resolved := c.resolveType(v.type_)
+	resolved := c.resolveType(typeName)
 	// Function-typed slots validate their initializer at compile time.
-	c.checkFunTypeValueAssign(resolved, name, v.value)
+	c.checkFunTypeValueAssign(resolved, name, v.Value)
 	if resolved == "long" || resolved == "ulong" || resolved == "double" {
 		c.typeHint = resolved
-	} else if v.type_ == "long" || v.type_ == "ulong" || v.type_ == "double" {
-		c.typeHint = v.type_
+	} else if typeName == "long" || typeName == "ulong" || typeName == "double" {
+		c.typeHint = typeName
 	} else {
 		c.typeHint = ""
 	}
@@ -181,8 +193,8 @@ func (c *compiler) compileVarDeclWithName(v varDecl, name string) {
 		// Global variable.
 		idx := len(c.globals)
 		c.globals[name] = idx
-		if v.value != nil {
-			c.compileExpression(v.value)
+		if v.Value != nil {
+			c.compileExpression(v.Value)
 			c.emit(opStoreGlobal, int32(idx), c.curLine)
 		}
 	} else {
@@ -190,8 +202,8 @@ func (c *compiler) compileVarDeclWithName(v varDecl, name string) {
 		c.addLocalWithType(name, resolved)
 		if c.capturedNames[name] {
 			// Box captured locals into cells so closures share the slot.
-			if v.value != nil {
-				c.compileExpression(v.value)
+			if v.Value != nil {
+				c.compileExpression(v.Value)
 				c.emit(opMakeCell, 0, c.curLine)
 				localIdx := c.resolveLocal(name)
 				c.emit(opStoreLocal, int32(localIdx), c.curLine)
@@ -204,8 +216,8 @@ func (c *compiler) compileVarDeclWithName(v varDecl, name string) {
 			if localIdx := c.resolveLocal(name); localIdx >= 0 {
 				c.locals[localIdx].isCell = true
 			}
-		} else if v.value != nil {
-			c.compileExpression(v.value)
+		} else if v.Value != nil {
+			c.compileExpression(v.Value)
 			localIdx := c.resolveLocal(name)
 			c.emit(opStoreLocal, int32(localIdx), c.curLine)
 		}
