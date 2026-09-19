@@ -11,8 +11,11 @@ import (
 
 // --- Function compilation ---
 
-func (c *compiler) compileFunDecl(fn funDecl) {
-	funcName := fn.name
+func (c *compiler) compileFunDecl(fn *frontend.FunStmt) {
+	funcName := fn.Name.Value
+	paramNames := funParamNames(fn)
+	paramTypes := funParamTypes(fn)
+	returnType := funReturnType(fn)
 
 	// Save current compiler state.
 	savedChunk := c.chunk
@@ -35,48 +38,48 @@ func (c *compiler) compileFunDecl(fn funDecl) {
 	c.inDeferBody = 0
 
 	// Pre-compute which locals/params are captured by lambdas in the body.
-	c.capturedNames, c.capturedOrder = computeFunctionCaptures(fn.paramNames, fn.body, false, nil)
+	c.capturedNames, c.capturedOrder = computeFunctionCaptures(paramNames, fn.Body, false, nil)
 
 	// Register parameters as locals at function scope.
-	for i, name := range fn.paramNames {
+	for i, name := range paramNames {
 		typeName := ""
-		if i < len(fn.paramTypes) {
-			typeName = c.resolveType(fn.paramTypes[i])
+		if i < len(paramTypes) {
+			typeName = c.resolveType(paramTypes[i])
 		}
 		c.addLocalWithType(name, typeName)
 	}
 	// Parameters captured by lambdas must be boxed into capture cells at
 	// entry so mutations stay shared between the function and its closures.
-	c.boxCapturedParams(fn.paramNames)
+	c.boxCapturedParams(paramNames)
 	c.returnTypeHint = ""
-	c.currentStreamFun = fn.isStream
-	if resolved := c.resolveType(fn.returnType); resolved == "long" || resolved == "ulong" || resolved == "double" {
+	c.currentStreamFun = fn.IsStream
+	if resolved := c.resolveType(returnType); resolved == "long" || resolved == "ulong" || resolved == "double" {
 		c.returnTypeHint = resolved
 	}
 
 	// Compile the body.
-	if len(fn.body.stmts) > 0 {
-		c.compileBlock(fn.body)
-	} else if fn.exprBody != nil {
+	if fn.Body != nil && len(fn.Body.Stmts) > 0 {
+		c.compileBlock(fn.Body)
+	} else if fn.ExprBody != nil {
 		// Expression body: fun f(): int = expr → compile as return <expr>.
 		prevHint := c.typeHint
-		resolved := c.resolveType(fn.returnType)
+		resolved := c.resolveType(returnType)
 		if resolved == "long" || resolved == "ulong" || resolved == "double" {
 			c.typeHint = resolved
 		} else {
 			c.typeHint = ""
 		}
-		c.compileExpression(fn.exprBody)
+		c.compileExpression(fn.ExprBody)
 		c.typeHint = prevHint
 		c.emit(opReturn, 0, c.curLine)
 		// Store the function chunk.
 		c.functions[funcName] = c.chunk
 		c.funcInfo[funcName] = &functionInfo{
 			name:       funcName,
-			paramCount: len(fn.paramNames),
-			paramTypes: append([]string(nil), fn.paramTypes...),
+			paramCount: len(paramNames),
+			paramTypes: append([]string(nil), paramTypes...),
 			localCount: c.peakLocals,
-			returnType: fn.returnType,
+			returnType: returnType,
 		}
 		c.chunk.LocalCount = c.peakLocals
 		c.chunk = savedChunk
@@ -97,10 +100,10 @@ func (c *compiler) compileFunDecl(fn funDecl) {
 	c.functions[funcName] = c.chunk
 	c.funcInfo[funcName] = &functionInfo{
 		name:       funcName,
-		paramCount: len(fn.paramNames),
-		paramTypes: append([]string(nil), fn.paramTypes...),
+		paramCount: len(paramNames),
+		paramTypes: append([]string(nil), paramTypes...),
 		localCount: c.peakLocals,
-		returnType: fn.returnType,
+		returnType: returnType,
 	}
 	c.chunk.LocalCount = c.peakLocals
 
@@ -155,11 +158,6 @@ func (c *compiler) compileLambdaExpr(e *frontend.LambdaExpr) {
 		}
 	}
 
-	var body blockDecl
-	if e.Body != nil {
-		body = blockDeclFromBlock(e.Body)
-	}
-
 	// Free names of the lambda body relative to the lambda's own scope. These
 	// resolve either to the enclosing frame (captures) or to this lambda's own
 	// params/locals (which must then be boxed for deeper closures).
@@ -167,9 +165,9 @@ func (c *compiler) compileLambdaExpr(e *frontend.LambdaExpr) {
 	for _, p := range paramNames {
 		ownDeclared[p] = true
 	}
-	collectDeclaredNamesBlock(body, ownDeclared)
+	collectDeclaredNamesBlock(e.Body, ownDeclared)
 	ownFree := make(map[string]bool)
-	freeNamesBlock(body, ownDeclared, ownFree)
+	freeNamesBlock(e.Body, ownDeclared, ownFree)
 	if e.ExprBody != nil {
 		freeNamesExpr(e.ExprBody, ownDeclared, ownFree)
 	}
@@ -262,8 +260,8 @@ func (c *compiler) compileLambdaExpr(e *frontend.LambdaExpr) {
 	// Parameters captured by nested lambdas are boxed into cells at entry.
 	c.boxCapturedParams(paramNames)
 
-	if len(body.stmts) > 0 {
-		c.compileBlock(body)
+	if e.Body != nil && len(e.Body.Stmts) > 0 {
+		c.compileBlock(e.Body)
 	} else if e.ExprBody != nil {
 		prevHint := c.typeHint
 		if returnTypeName == "long" || returnTypeName == "ulong" || returnTypeName == "double" {
@@ -339,7 +337,7 @@ func (c *compiler) compileLambdaExpr(e *frontend.LambdaExpr) {
 // only resolve to globals/functions are not captured. extraCaptures lists
 // names already known to be captures (e.g. the enclosing function's captured
 // set, or `this` inside methods); those are captured too when referenced.
-func computeFunctionCaptures(params []string, body blockDecl, isMethod bool, extraCaptures map[string]bool) (map[string]bool, []string) {
+func computeFunctionCaptures(params []string, body *frontend.BlockStmt, isMethod bool, extraCaptures map[string]bool) (map[string]bool, []string) {
 	declared := make(map[string]bool)
 	for _, p := range params {
 		declared[p] = true
@@ -350,7 +348,7 @@ func computeFunctionCaptures(params []string, body blockDecl, isMethod bool, ext
 	collectDeclaredNamesBlock(body, declared)
 
 	free := make(map[string]bool)
-	freeNamesStmt(stmtDecl{kind: stmtKindBlock, blk: body}, declared, free)
+	freeNamesBlock(body, declared, free)
 
 	captured := make(map[string]bool)
 	for name := range free {
@@ -377,112 +375,109 @@ func computeFunctionCaptures(params []string, body blockDecl, isMethod bool, ext
 }
 
 // collectDeclaredNamesBlock adds every name bound inside the block (vars,
-// for-loop variables, when-case variables) to out.
-func collectDeclaredNamesBlock(block blockDecl, out map[string]bool) {
-	for _, s := range block.stmts {
+// for-loop variables, catch variables) to out.
+func collectDeclaredNamesBlock(block *frontend.BlockStmt, out map[string]bool) {
+	if block == nil {
+		return
+	}
+	for _, s := range block.Stmts {
 		collectDeclaredNames(s, out)
 	}
 }
 
-func collectDeclaredNames(stmt stmtDecl, out map[string]bool) {
-	switch stmt.kind {
-	case stmtKindVar:
-		if stmt.vr.name != "" {
-			out[stmt.vr.name] = true
+func collectDeclaredNames(stmt frontend.Statement, out map[string]bool) {
+	switch s := stmt.(type) {
+	case *frontend.VarStmt:
+		if s.Name.Value != "" {
+			out[s.Name.Value] = true
 		}
-	case stmtKindFor:
-		if stmt.for_.isForIn {
-			if stmt.for_.variable != "" {
-				out[stmt.for_.variable] = true
+	case *frontend.ForStmt:
+		if s.IsForIn {
+			if s.Variable != "" {
+				out[s.Variable] = true
 			}
-		} else if stmt.for_.init != nil {
-			collectDeclaredNames(*stmt.for_.init, out)
+		} else if s.Init != nil {
+			collectDeclaredNames(s.Init, out)
 		}
-	case stmtKindWhen:
+	case *frontend.WhenStmt:
 		// when-case type-match variables are not real locals at runtime
 		// (never bound by compileWhenStmt); skip them.
-	case stmtKindIf:
-		collectDeclaredNamesBlock(stmt.if_.consequence, out)
-		if stmt.if_.alternativeBlk != nil {
-			collectDeclaredNamesBlock(*stmt.if_.alternativeBlk, out)
+	case *frontend.IfStmt:
+		collectDeclaredNamesBlock(s.Consequence, out)
+		if s.Alternative != nil {
+			collectDeclaredNames(s.Alternative, out)
 		}
-		if stmt.if_.alternativeIf != nil {
-			alt := stmtDecl{kind: stmtKindIf, if_: *stmt.if_.alternativeIf}
-			collectDeclaredNames(alt, out)
+	case *frontend.WhileStmt:
+		collectDeclaredNamesBlock(s.Body, out)
+	case *frontend.BlockStmt:
+		collectDeclaredNamesBlock(s, out)
+	case *frontend.TryStmt:
+		collectDeclaredNamesBlock(s.Body, out)
+		if s.CatchVar != nil && s.CatchVar.Value != "" {
+			out[s.CatchVar.Value] = true
 		}
-	case stmtKindWhile:
-		collectDeclaredNamesBlock(stmt.whl.body, out)
-	case stmtKindBlock:
-		collectDeclaredNamesBlock(stmt.blk, out)
-	case stmtKindTry:
-		collectDeclaredNamesBlock(stmt.try_.body, out)
-		if stmt.try_.catchVar != "" {
-			out[stmt.try_.catchVar] = true
-		}
-		collectDeclaredNamesBlock(stmt.try_.catchBody, out)
-	case stmtKindDefer:
-		collectDeclaredNamesBlock(stmt.dfr.body, out)
+		collectDeclaredNamesBlock(s.CatchBody, out)
+	case *frontend.DeferStmt:
+		collectDeclaredNamesBlock(s.Body, out)
 	}
 }
 
 // freeNamesStmt collects free identifier names (reads or writes) reachable
 // from stmt into out, ignoring names in bound.
-func freeNamesStmt(stmt stmtDecl, bound map[string]bool, out map[string]bool) {
-	switch stmt.kind {
-	case stmtKindVar:
-		freeNamesExpr(stmt.vr.value, bound, out)
-	case stmtKindReturn:
-		freeNamesExpr(stmt.ret.value, bound, out)
-	case stmtKindYield:
-		freeNamesExpr(stmt.yld.value, bound, out)
-	case stmtKindExpr:
-		freeNamesExpr(stmt.expr, bound, out)
-	case stmtKindIf:
-		freeNamesExpr(stmt.if_.condition, bound, out)
-		freeNamesBlock(stmt.if_.consequence, bound, out)
-		if stmt.if_.alternativeBlk != nil {
-			freeNamesBlock(*stmt.if_.alternativeBlk, bound, out)
+func freeNamesStmt(stmt frontend.Statement, bound map[string]bool, out map[string]bool) {
+	switch s := stmt.(type) {
+	case *frontend.VarStmt:
+		freeNamesExpr(s.Value, bound, out)
+	case *frontend.ReturnStmt:
+		freeNamesExpr(s.Value, bound, out)
+	case *frontend.YieldStmt:
+		freeNamesExpr(s.Value, bound, out)
+	case *frontend.ExprStatement:
+		freeNamesExpr(s.Expr, bound, out)
+	case *frontend.IfStmt:
+		freeNamesExpr(s.Condition, bound, out)
+		freeNamesBlock(s.Consequence, bound, out)
+		if s.Alternative != nil {
+			freeNamesStmt(s.Alternative, bound, out)
 		}
-		if stmt.if_.alternativeIf != nil {
-			freeNamesStmt(stmtDecl{kind: stmtKindIf, if_: *stmt.if_.alternativeIf}, bound, out)
+	case *frontend.WhileStmt:
+		freeNamesExpr(s.Condition, bound, out)
+		freeNamesBlock(s.Body, bound, out)
+	case *frontend.ForStmt:
+		if s.Init != nil {
+			freeNamesStmt(s.Init, bound, out)
 		}
-	case stmtKindWhile:
-		freeNamesExpr(stmt.whl.condition, bound, out)
-		freeNamesBlock(stmt.whl.body, bound, out)
-	case stmtKindFor:
-		if stmt.for_.init != nil {
-			freeNamesStmt(*stmt.for_.init, bound, out)
-		}
-		freeNamesExpr(stmt.for_.condition, bound, out)
-		freeNamesExpr(stmt.for_.update, bound, out)
-		freeNamesExpr(stmt.for_.iterable, bound, out)
-		freeNamesBlock(stmt.for_.body, bound, out)
-	case stmtKindWhen:
-		freeNamesExpr(stmt.when.expr, bound, out)
-		for _, cc := range stmt.when.cases {
-			for _, val := range cc.values {
+		freeNamesExpr(s.Condition, bound, out)
+		freeNamesExpr(s.Update, bound, out)
+		freeNamesExpr(s.Iterable, bound, out)
+		freeNamesBlock(s.Body, bound, out)
+	case *frontend.WhenStmt:
+		freeNamesExpr(s.Expr, bound, out)
+		for _, cc := range s.Cases {
+			for _, val := range cc.Values {
 				freeNamesExpr(val, bound, out)
 			}
-			freeNamesExpr(cc.guard, bound, out)
-			freeNamesBlock(cc.body, bound, out)
+			freeNamesExpr(cc.Guard, bound, out)
+			freeNamesBlock(cc.Body, bound, out)
 		}
-		if stmt.when.defaultCase != nil {
-			freeNamesBlock(*stmt.when.defaultCase, bound, out)
-		}
-	case stmtKindBlock:
-		freeNamesBlock(stmt.blk, bound, out)
-	case stmtKindTry:
-		freeNamesBlock(stmt.try_.body, bound, out)
-		freeNamesBlock(stmt.try_.catchBody, bound, out)
-	case stmtKindDefer:
-		freeNamesBlock(stmt.dfr.body, bound, out)
-	case stmtKindBreak, stmtKindContinue:
+		freeNamesBlock(s.DefaultCase, bound, out)
+	case *frontend.BlockStmt:
+		freeNamesBlock(s, bound, out)
+	case *frontend.TryStmt:
+		freeNamesBlock(s.Body, bound, out)
+		freeNamesBlock(s.CatchBody, bound, out)
+	case *frontend.DeferStmt:
+		freeNamesBlock(s.Body, bound, out)
+	case *frontend.BreakStmt, *frontend.ContinueStmt:
 		// nothing
 	}
 }
 
-func freeNamesBlock(block blockDecl, bound map[string]bool, out map[string]bool) {
-	for _, s := range block.stmts {
+func freeNamesBlock(block *frontend.BlockStmt, bound map[string]bool, out map[string]bool) {
+	if block == nil {
+		return
+	}
+	for _, s := range block.Stmts {
 		freeNamesStmt(s, bound, out)
 	}
 }
@@ -572,9 +567,8 @@ func freeNamesLambda(e *frontend.LambdaExpr, bound map[string]bool, out map[stri
 		lambdaBound[p.Name.Value] = true
 	}
 	if e.Body != nil {
-		body := blockDeclFromBlock(e.Body)
-		collectDeclaredNamesBlock(body, lambdaBound)
-		freeNamesBlock(body, lambdaBound, out)
+		collectDeclaredNamesBlock(e.Body, lambdaBound)
+		freeNamesBlock(e.Body, lambdaBound, out)
 	}
 	if e.ExprBody != nil {
 		freeNamesExpr(e.ExprBody, lambdaBound, out)

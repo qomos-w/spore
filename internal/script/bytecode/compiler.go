@@ -1,5 +1,9 @@
-// compiler.go holds the bytecode compiler's core state, the AST adapter types and resolved declaration-info records, and the entry points that lower a parsed program into a chunk.
-
+// compiler.go holds the bytecode compiler's core state, the resolved
+// declaration-info records, and the entry points that lower a parsed program
+// into a chunk. The compiler consumes the frontend AST directly: body
+// statements dispatch through compileStatement (compiler_stmt.go) and top-level
+// statements through compileTopLevelDecl (compiler_decls.go), with no private
+// copy of the AST.
 package bytecode
 
 import (
@@ -43,6 +47,11 @@ type compiler struct {
 	lambdaCounter      int             // unique lambda name counter for this compile unit
 	capturedNames      map[string]bool // names captured by lambdas in the current function scope
 	capturedOrder      []string        // deterministic capture order (must match lambda chunk layout)
+	// moduleGlobalNames maps exported top-level var statements to their
+	// module-qualified global name during module compilation (set by
+	// compileProgram, read by compileVarDecl). It keeps the shared frontend
+	// AST immutable across compiles.
+	moduleGlobalNames map[*frontend.VarStmt]string
 	// optionalChainJumps collects the pending opJumpIfNull instructions
 	// emitted for `?.` links of the optional chain currently being
 	// compiled; compileOptionalChainExpr patches them to the chain end.
@@ -51,93 +60,6 @@ type compiler struct {
 	inDeferBody        int // >0 while compiling a defer body (rejects return/break/continue/yield)
 }
 
-type topLevelStmt interface {
-	topLevelStmtNode()
-}
-
-type funStmtAdapter struct{ stmt *frontend.FunStmt }
-
-type structStmtAdapter struct{ stmt *frontend.StructStmt }
-
-type classStmtAdapter struct{ stmt *frontend.ClassStmt }
-
-type interfaceStmtAdapter struct{ stmt *frontend.InterfaceStmt }
-
-type varStmtAdapter struct{ stmt *frontend.VarStmt }
-
-type globalAssignStmtAdapter struct{ stmt *frontend.ExprStatement }
-
-type enumStmtAdapter struct{ stmt *frontend.EnumStmt }
-
-type typeAliasStmtAdapter struct {
-	stmt *frontend.TypeAliasStmt
-}
-
-func (funStmtAdapter) topLevelStmtNode()          {}
-func (structStmtAdapter) topLevelStmtNode()       {}
-func (classStmtAdapter) topLevelStmtNode()        {}
-func (interfaceStmtAdapter) topLevelStmtNode()    {}
-func (varStmtAdapter) topLevelStmtNode()          {}
-func (globalAssignStmtAdapter) topLevelStmtNode() {}
-func (enumStmtAdapter) topLevelStmtNode()         {}
-func (typeAliasStmtAdapter) topLevelStmtNode()    {}
-
-type localStmt interface {
-	localStmtNode()
-}
-
-type altStmt interface {
-	altStmtNode()
-}
-
-type varStmtAdapterLocal struct{ stmt *frontend.VarStmt }
-
-type returnStmtAdapter struct{ stmt *frontend.ReturnStmt }
-
-type yieldStmtAdapter struct{ stmt *frontend.YieldStmt }
-
-type ifStmtAdapter struct{ stmt *frontend.IfStmt }
-
-type whileStmtAdapter struct{ stmt *frontend.WhileStmt }
-
-type forStmtAdapter struct{ stmt *frontend.ForStmt }
-
-type whenStmtAdapter struct{ stmt *frontend.WhenStmt }
-
-type breakStmtAdapter struct{}
-
-type continueStmtAdapter struct{}
-
-type blockStmtAdapter struct{ stmt *frontend.BlockStmt }
-
-type exprStmtAdapter struct{ stmt *frontend.ExprStatement }
-
-type altIfStmtAdapter struct{ stmt *frontend.IfStmt }
-
-type altBlockStmtAdapter struct{ stmt *frontend.BlockStmt }
-
-type tryStmtAdapter struct{ stmt *frontend.TryStmt }
-
-type deferStmtAdapter struct{ stmt *frontend.DeferStmt }
-
-func (varStmtAdapterLocal) localStmtNode() {}
-func (returnStmtAdapter) localStmtNode()   {}
-func (yieldStmtAdapter) localStmtNode()    {}
-func (ifStmtAdapter) localStmtNode()       {}
-func (whileStmtAdapter) localStmtNode()    {}
-func (forStmtAdapter) localStmtNode()      {}
-func (whenStmtAdapter) localStmtNode()     {}
-func (breakStmtAdapter) localStmtNode()    {}
-func (continueStmtAdapter) localStmtNode() {}
-func (blockStmtAdapter) localStmtNode()    {}
-func (exprStmtAdapter) localStmtNode()     {}
-
-func (altIfStmtAdapter) altStmtNode()    {}
-func (altBlockStmtAdapter) altStmtNode() {}
-
-func (tryStmtAdapter) localStmtNode()   {}
-func (deferStmtAdapter) localStmtNode() {}
-
 type accessModifier int
 
 const (
@@ -145,31 +67,23 @@ const (
 	accessPrivate
 )
 
+// classInfo is a resolved class declaration: hierarchy, fields and the resolved
+// method set (declared methods plus interface defaults synthesized by
+// synthesizeInterfaceDefaultMethods). Methods are the frontend AST nodes
+// themselves — no private copy is kept.
 type classInfo struct {
 	name       string
 	parent     string // parent class name (empty if none)
 	isOpen     bool
 	implements []string // interface names
 	fields     []fieldInfo
-	methods    []methodDecl
+	methods    []*frontend.FunStmt
 }
 
 type fieldInfo struct {
 	name     string
 	access   accessModifier
 	typeName string
-}
-
-type methodDecl struct {
-	name       string
-	paramNames []string
-	paramTypes []string
-	body       blockDecl
-	exprBody   frontend.Expression
-	returnType string
-	isOpen     bool
-	isOverride bool
-	access     accessModifier
 }
 
 type structFieldInfo struct {
@@ -204,163 +118,13 @@ func (e enumInfo) memberValue(member string) (int32, bool) {
 	return 0, false
 }
 
+// interfaceInfo is a resolved interface declaration. Methods are the frontend
+// method signatures themselves; parameter counts and return types are derived
+// from the signature on demand (see interfaceMethodParamCount /
+// interfaceMethodReturnType).
 type interfaceInfo struct {
 	name    string
-	methods []interfaceMethodSig
-}
-
-type interfaceMethodSig struct {
-	name       string
-	paramCount int
-	returnType string
-	// Default method body support (optional):
-	hasDefault bool
-	paramNames []string
-	paramTypes []string
-	body       blockDecl
-}
-
-type funDecl struct {
-	name       string
-	paramNames []string
-	paramTypes []string
-	body       blockDecl
-	exprBody   frontend.Expression
-	returnType string
-	isStream   bool
-}
-
-func methodReturnsCompatible(method, parentMethod methodDecl) bool {
-	return method.returnType == parentMethod.returnType
-}
-
-func (m methodDecl) returnTypeName() string {
-	return m.returnType
-}
-
-type varDecl struct {
-	name   string
-	value  frontend.Expression
-	type_  string // type annotation name ("long", "ulong", "double", etc.) for encoding selection
-	export bool
-}
-
-type blockDecl struct {
-	stmts []stmtDecl
-}
-
-type returnDecl struct {
-	value frontend.Expression
-}
-
-type yieldDecl struct {
-	value frontend.Expression
-}
-
-type ifDecl struct {
-	condition      frontend.Expression
-	consequence    blockDecl
-	alternativeIf  *ifDecl
-	alternativeBlk *blockDecl
-}
-
-type whileDecl struct {
-	condition frontend.Expression
-	body      blockDecl
-}
-
-type forDecl struct {
-	init      *stmtDecl
-	condition frontend.Expression
-	update    frontend.Expression
-	body      blockDecl
-	isForIn   bool
-	variable  string
-	iterable  frontend.Expression
-}
-
-type whenCaseDecl struct {
-	values       []frontend.Expression
-	variable     string
-	typeName     string
-	hasTypeMatch bool
-	guard        frontend.Expression
-	body         blockDecl
-}
-
-type whenDecl struct {
-	expr        frontend.Expression
-	cases       []whenCaseDecl
-	defaultCase *blockDecl
-}
-
-type tryDecl struct {
-	body      blockDecl
-	catchVar  string
-	catchBody blockDecl
-}
-
-type deferDecl struct {
-	body blockDecl
-}
-
-type stmtKind int
-
-const (
-	stmtKindVar stmtKind = iota
-	stmtKindReturn
-	stmtKindYield
-	stmtKindIf
-	stmtKindWhile
-	stmtKindFor
-	stmtKindWhen
-	stmtKindBreak
-	stmtKindContinue
-	stmtKindBlock
-	stmtKindExpr
-	stmtKindTry
-	stmtKindDefer
-)
-
-type stmtDecl struct {
-	kind stmtKind
-	vr   varDecl
-	ret  returnDecl
-	yld  yieldDecl
-	if_  ifDecl
-	whl  whileDecl
-	for_ forDecl
-	when whenDecl
-	blk  blockDecl
-	expr frontend.Expression
-	try_ tryDecl
-	dfr  deferDecl
-}
-
-type topLevelDeclKind int
-
-const (
-	topLevelDeclFunction topLevelDeclKind = iota
-	topLevelDeclStruct
-	topLevelDeclEnum
-	topLevelDeclClass
-	topLevelDeclInterface
-	topLevelDeclVar
-	topLevelDeclGlobalAssign
-	topLevelDeclTypeAlias
-)
-
-type topLevelDecl struct {
-	kind         topLevelDeclKind
-	fun          funDecl
-	class        classInfo
-	strct        structInfo
-	enm          enumInfo
-	enumAST      *frontend.EnumStmt
-	iface        interfaceInfo
-	vr           varDecl
-	globalAssign *frontend.ExprStatement
-	typeAlias    *frontend.TypeAliasStmt
+	methods []*frontend.MethodSignature
 }
 
 type local struct {
@@ -383,7 +147,6 @@ type memberLookup struct {
 	access     accessModifier
 	typeName   string
 	returnType string
-	methodDecl methodDecl
 	fieldInfo  fieldInfo
 }
 
@@ -452,15 +215,16 @@ func (c *compiler) compileModule(path string, prog *frontend.Program) (*chunk, e
 }
 
 func (c *compiler) compileProgram(prog *frontend.Program, modulePath string) (*chunk, error) {
-	decls := topLevelDeclsFromProgram(prog)
+	stmts := topLevelStatements(prog)
 	c.interfaces = collectTopLevelInterfaces(prog)
-	for _, decl := range decls {
-		if decl.kind == topLevelDeclTypeAlias && decl.typeAlias != nil {
-			c.registerTypeAlias(decl.typeAlias)
+	c.moduleGlobalNames = nil
+	for _, stmt := range stmts {
+		if alias, ok := stmt.(*frontend.TypeAliasStmt); ok {
+			c.registerTypeAlias(alias)
 		}
 	}
-	for _, decl := range decls {
-		c.registerTopLevelTypeInfo(decl)
+	for _, stmt := range stmts {
+		c.registerTopLevelTypeInfo(stmt)
 	}
 	var previousGlobals map[string]string
 	var previousGlobalTypes map[string]string
@@ -478,41 +242,38 @@ func (c *compiler) compileProgram(prog *frontend.Program, modulePath string) (*c
 		for name, chunk := range c.functions {
 			previousFunctions[name] = chunk
 		}
-		for i, decl := range decls {
-			if decl.kind == topLevelDeclVar && decl.vr.export {
-				originalName := decl.vr.name
-				qualifiedName := qualifiedModuleGlobalName(modulePath, originalName)
-				c.globalTypes[qualifiedName] = c.globalTypes[originalName]
-				delete(c.globalTypes, originalName)
-				decl.vr.name = qualifiedName
-				decls[i] = decl
+		c.moduleGlobalNames = make(map[*frontend.VarStmt]string)
+		for _, stmt := range stmts {
+			vr, ok := stmt.(*frontend.VarStmt)
+			if !ok || !vr.Exported {
+				continue
 			}
+			originalName := vr.Name.Value
+			qualifiedName := qualifiedModuleGlobalName(modulePath, originalName)
+			c.globalTypes[qualifiedName] = c.globalTypes[originalName]
+			delete(c.globalTypes, originalName)
+			// Record the qualified name for the compile pass without mutating
+			// the shared AST node (the program may be compiled again).
+			c.moduleGlobalNames[vr] = qualifiedName
 		}
 	}
 	c.validateTypeAliases()
-	for i, decl := range decls {
-		if decl.kind == topLevelDeclClass {
-			c.normalizeClassRelationships(decl.class.name)
-			decl.class = c.classes[decl.class.name]
-			decls[i] = decl
+	for _, stmt := range stmts {
+		if cl, ok := stmt.(*frontend.ClassStmt); ok {
+			c.normalizeClassRelationships(cl.Name.Value)
 		}
 	}
 	// Inherit interface default method bodies into implementing classes that
 	// do not provide (or inherit) the method themselves. Runs after all class
 	// relationships are normalized and in topological order (parents first) so
-	// subclass synthesis sees defaults already inherited by ancestors.
+	// subclass synthesis sees defaults already inherited by ancestors. The
+	// resolved class records are read back from c.classes by
+	// compileTopLevelDecl, so no re-sync of a local declaration copy is needed.
 	for _, className := range c.topologicalClassOrder() {
 		c.synthesizeInterfaceDefaultMethods(className)
 	}
-	for i, decl := range decls {
-		if decl.kind == topLevelDeclClass {
-			decl.class = c.classes[decl.class.name]
-			decls[i] = decl
-		}
-	}
-	for i, decl := range decls {
-		isLast := i == len(decls)-1
-		c.compileTopLevelDecl(decl, isLast)
+	for _, stmt := range stmts {
+		c.compileTopLevelDecl(stmt)
 	}
 	if modulePath != "" {
 		c.retainModuleGlobals(previousGlobals, previousGlobalTypes)

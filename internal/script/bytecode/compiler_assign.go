@@ -324,7 +324,7 @@ func (c *compiler) classHasConstructor(className string) bool {
 		return false
 	}
 	for _, method := range info.methods {
-		if method.name == className {
+		if method.Name.Value == className {
 			return true
 		}
 	}

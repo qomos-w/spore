@@ -62,6 +62,7 @@ type (
 type (
 	MethodSignature = methodSignature
 	TypeAnnotation  = typeAnnotation
+	Param           = param
 )
 
 type (

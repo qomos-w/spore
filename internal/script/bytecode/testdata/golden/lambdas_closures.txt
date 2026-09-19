@@ -1,0 +1,83 @@
+== main ==
+source="" localCount=0
+  0000 HALT                         0 line=0
+== fun lambda$0 ==
+source="lambda$0" localCount=2
+  0000 LOAD_LOCAL                   0 line=0
+  0001 LOAD_CELL                    1 line=0
+  0002 ADD_INT                      0 line=0
+  0003 RETURN                       0 line=0
+== fun lambda$1 ==
+source="lambda$1" localCount=2
+  0000 LOAD_LOCAL                   0 line=0
+  0001 LOAD_CELL                    1 line=0
+  0002 ADD_INT                      0 line=0
+  0003 RETURN                       0 line=0
+== fun makeAdder ==
+source="makeAdder" localCount=1
+  0000 LOAD_LOCAL                   0 line=0
+  0001 MAKE_CELL                    0 line=0
+  0002 STORE_LOCAL                  0 line=0
+  0003 LOAD_LOCAL                   0 line=0
+  0004 MAKE_CLOSURE                 65536 line=0
+  0005 RETURN                       0 line=0
+  0006 RETURN_VOID                  0 line=0
+  -- nested --
+    source="lambda$0" localCount=2
+      0000 LOAD_LOCAL                   0 line=0
+      0001 LOAD_CELL                    1 line=0
+      0002 ADD_INT                      0 line=0
+      0003 RETURN                       0 line=0
+== fun run ==
+source="run" localCount=6
+  0000 PUSH_INT                     0 line=0
+  0001 MAKE_CELL                    0 line=0
+  0002 STORE_LOCAL                  0 line=0
+  0003 LOAD_LOCAL                   0 line=0
+  0004 MAKE_CLOSURE                 65536 line=0
+  0005 STORE_LOCAL                  1 line=0
+  0006 PUSH_INT                     1 line=0
+  0007 STORE_LOCAL                  2 line=0
+  0008 PUSH_INT                     2 line=0
+  0009 PUSH_INT                     3 line=0
+  0010 PUSH_INT                     4 line=0
+  0011 NEW_ARRAY                    3 line=0
+  0012 STORE_LOCAL                  3 line=0
+  0013 PUSH_INT                     5 line=0
+  0014 STORE_LOCAL                  4 line=0
+  0015 JUMP                         30 line=0
+  0016 LOAD_LOCAL                   3 line=0
+  0017 LOAD_LOCAL                   4 line=0
+  0018 ITER_ITEM                    0 line=0
+  0019 STORE_LOCAL                  5 line=0
+  0020 LOAD_LOCAL                   2 line=0
+  0021 LOAD_LOCAL                   5 line=0
+  0022 LOAD_LOCAL                   1 line=0
+  0023 CALL_VALUE                   1 line=0
+  0024 ADD                          0 line=0
+  0025 STORE_LOCAL_POP              2 line=0
+  0026 LOAD_LOCAL                   4 line=0
+  0027 PUSH_INT                     6 line=0
+  0028 ADD                          0 line=0
+  0029 STORE_LOCAL                  4 line=0
+  0030 LOAD_LOCAL                   4 line=0
+  0031 LOAD_LOCAL                   3 line=0
+  0032 ITER_LEN                     0 line=0
+  0033 LT                           0 line=0
+  0034 JUMP_IF_TRUE                 16 line=0
+  0035 LOAD_LOCAL                   2 line=0
+  0036 RETURN                       0 line=0
+  0037 RETURN_VOID                  0 line=0
+  const[0]=int32(10)
+  const[1]=int32(0)
+  const[2]=int32(1)
+  const[3]=int32(2)
+  const[4]=int32(3)
+  const[5]=int32(0)
+  const[6]=int32(1)
+  -- nested --
+    source="lambda$1" localCount=2
+      0000 LOAD_LOCAL                   0 line=0
+      0001 LOAD_CELL                    1 line=0
+      0002 ADD_INT                      0 line=0
+      0003 RETURN                       0 line=0

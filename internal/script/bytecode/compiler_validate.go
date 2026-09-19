@@ -8,26 +8,30 @@ import (
 	"github.com/qomos-w/spore/internal/script/frontend"
 )
 
-func (c *compiler) validateSuperOutsideClass(fn funDecl) {
-	if len(fn.body.stmts) == 0 && fn.exprBody == nil {
+func (c *compiler) validateSuperOutsideClass(fn *frontend.FunStmt) {
+	if fn == nil {
 		return
 	}
-	method := methodDecl{name: fn.name, body: fn.body, exprBody: fn.exprBody}
-	c.validateSuperUsage(classInfo{name: fn.name, parent: ""}, method)
+	if (fn.Body == nil || len(fn.Body.Stmts) == 0) && fn.ExprBody == nil {
+		return
+	}
+	c.validateSuperUsage(classInfo{name: fn.Name.Value, parent: ""}, fn)
 }
 
 func (c *compiler) validateClassDecl(info classInfo) {
 	c.validateFieldShadowing(info)
 	for _, method := range info.methods {
-		if method.isOverride && info.parent == "" {
-			c.addCompileError("override_without_parent", "bytecode/oop/override", fmt.Sprintf("method %q in class %q is marked override but class has no parent", method.name, info.name))
+		methodName := method.Name.Value
+		paramCount := len(method.Params)
+		if method.IsOverride && info.parent == "" {
+			c.addCompileError("override_without_parent", "bytecode/oop/override", fmt.Sprintf("method %q in class %q is marked override but class has no parent", methodName, info.name))
 		}
-		if method.isOverride && method.access == accessPrivate {
-			c.addCompileError("override_visibility_narrowed", "bytecode/oop/override", fmt.Sprintf("method %q in class %q cannot override with private visibility", method.name, info.name))
+		if method.IsOverride && methodAccess(method) == accessPrivate {
+			c.addCompileError("override_visibility_narrowed", "bytecode/oop/override", fmt.Sprintf("method %q in class %q cannot override with private visibility", methodName, info.name))
 		}
-		if !method.isOverride {
-			if ancestor, ok := c.lookupMethodOnAncestor(info.parent, method.name); ok && method.access == accessPrivate {
-				c.addCompileError("method_visibility_narrowed", "bytecode/oop/override", fmt.Sprintf("method %q in class %q shadows ancestor method from class %q with private visibility", method.name, info.name, ancestor.owner))
+		if !method.IsOverride {
+			if ancestor, ok := c.lookupMethodOnAncestor(info.parent, methodName); ok && methodAccess(method) == accessPrivate {
+				c.addCompileError("method_visibility_narrowed", "bytecode/oop/override", fmt.Sprintf("method %q in class %q shadows ancestor method from class %q with private visibility", methodName, info.name, ancestor.owner))
 			}
 		}
 		if info.parent != "" {
@@ -38,23 +42,24 @@ func (c *compiler) validateClassDecl(info classInfo) {
 				}
 			} else {
 				for _, parentMethod := range parentInfo.methods {
-					if parentMethod.name != method.name {
+					if parentMethod.Name.Value != methodName {
 						continue
 					}
-					if method.isOverride {
-						if len(parentMethod.paramNames) != len(method.paramNames) {
-							c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parameter count %d does not match parent count %d", method.name, len(method.paramNames), len(parentMethod.paramNames)), fmt.Sprintf("%d parameter(s)", len(parentMethod.paramNames)), fmt.Sprintf("%d parameter(s)", len(method.paramNames)))
+					if method.IsOverride {
+						parentParamCount := len(parentMethod.Params)
+						if parentParamCount != paramCount {
+							c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parameter count %d does not match parent count %d", methodName, paramCount, parentParamCount), fmt.Sprintf("%d parameter(s)", parentParamCount), fmt.Sprintf("%d parameter(s)", paramCount))
 						} else if !methodReturnsCompatible(method, parentMethod) {
-							c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: return type %q does not match parent return type %q", method.name, method.returnTypeName(), parentMethod.returnTypeName()), parentMethod.returnTypeName(), method.returnTypeName())
+							c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: return type %q does not match parent return type %q", methodName, funReturnType(method), funReturnType(parentMethod)), funReturnType(parentMethod), funReturnType(method))
 						}
-						if !parentMethod.isOpen {
-							c.addCompileError("override_parent_method_not_open", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parent method in class %q is not open", method.name, info.parent))
+						if !parentMethod.IsOpen {
+							c.addCompileError("override_parent_method_not_open", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parent method in class %q is not open", methodName, info.parent))
 						}
 					}
 				}
 			}
 		}
-		if method.exprBody == nil && method.body.stmts == nil {
+		if method.ExprBody == nil && (method.Body == nil || method.Body.Stmts == nil) {
 			continue
 		}
 		c.validateSuperUsage(info, method)
@@ -67,14 +72,17 @@ func (c *compiler) validateClassDecl(info classInfo) {
 		}
 		for _, ifaceMethod := range iface.methods {
 			found := false
+			ifaceMethodName := ifaceMethod.Name.Value
+			expectedParams := len(ifaceMethod.Params)
+			ifaceReturn := interfaceMethodReturnType(ifaceMethod)
 			for _, classMethod := range info.methods {
-				if classMethod.name == ifaceMethod.name {
+				if classMethod.Name.Value == ifaceMethodName {
 					found = true
-					if len(classMethod.paramNames) != ifaceMethod.paramCount {
-						c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q has parameter count %d, expected %d", info.name, ifaceName, ifaceMethod.name, len(classMethod.paramNames), ifaceMethod.paramCount), fmt.Sprintf("%d parameter(s)", ifaceMethod.paramCount), fmt.Sprintf("%d parameter(s)", len(classMethod.paramNames)))
+					if params := len(classMethod.Params); params != expectedParams {
+						c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q has parameter count %d, expected %d", info.name, ifaceName, ifaceMethodName, params, expectedParams), fmt.Sprintf("%d parameter(s)", expectedParams), fmt.Sprintf("%d parameter(s)", params))
 					}
-					if ifaceMethod.returnType != "" && classMethod.returnType != ifaceMethod.returnType {
-						c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q returns %q, expected %q", info.name, ifaceName, ifaceMethod.name, classMethod.returnType, ifaceMethod.returnType), ifaceMethod.returnType, classMethod.returnType)
+					if ifaceReturn != "" && funReturnType(classMethod) != ifaceReturn {
+						c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q returns %q, expected %q", info.name, ifaceName, ifaceMethodName, funReturnType(classMethod), ifaceReturn), ifaceReturn, funReturnType(classMethod))
 					}
 					break
 				}
@@ -85,22 +93,22 @@ func (c *compiler) validateClassDecl(info classInfo) {
 			if info.parent != "" {
 				if parentInfo, ok := c.classes[info.parent]; ok {
 					for _, parentMethod := range parentInfo.methods {
-						if parentMethod.name != ifaceMethod.name {
+						if parentMethod.Name.Value != ifaceMethodName {
 							continue
 						}
 						found = true
-						if len(parentMethod.paramNames) != ifaceMethod.paramCount {
-							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q inherits method %q from %q with parameter count %d, expected %d for interface %q", info.name, ifaceMethod.name, info.parent, len(parentMethod.paramNames), ifaceMethod.paramCount, ifaceName), fmt.Sprintf("%d parameter(s)", ifaceMethod.paramCount), fmt.Sprintf("%d parameter(s)", len(parentMethod.paramNames)))
+						if params := len(parentMethod.Params); params != expectedParams {
+							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q inherits method %q from %q with parameter count %d, expected %d for interface %q", info.name, ifaceMethodName, info.parent, params, expectedParams, ifaceName), fmt.Sprintf("%d parameter(s)", expectedParams), fmt.Sprintf("%d parameter(s)", params))
 						}
-						if ifaceMethod.returnType != "" && parentMethod.returnType != ifaceMethod.returnType {
-							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q inherits method %q from %q returning %q, expected %q for interface %q", info.name, ifaceMethod.name, info.parent, parentMethod.returnType, ifaceMethod.returnType, ifaceName), ifaceMethod.returnType, parentMethod.returnType)
+						if ifaceReturn != "" && funReturnType(parentMethod) != ifaceReturn {
+							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q inherits method %q from %q returning %q, expected %q for interface %q", info.name, ifaceMethodName, info.parent, funReturnType(parentMethod), ifaceReturn, ifaceName), ifaceReturn, funReturnType(parentMethod))
 						}
 						break
 					}
 				}
 			}
 			if !found {
-				c.addCompileError("interface_method_missing", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but is missing method %q", info.name, ifaceName, ifaceMethod.name))
+				c.addCompileError("interface_method_missing", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but is missing method %q", info.name, ifaceName, ifaceMethodName))
 			}
 		}
 	}
@@ -128,8 +136,7 @@ func (c *compiler) validateFieldShadowing(info classInfo) {
 	}
 }
 
-func (c *compiler) validateSuperUsage(info classInfo, method methodDecl) {
-	walkExpression := func(expr frontend.Expression, visit func(frontend.Expression)) {}
+func (c *compiler) validateSuperUsage(info classInfo, method *frontend.FunStmt) {
 	var walk func(frontend.Expression)
 	walk = func(expr frontend.Expression) {
 		if expr == nil {
@@ -192,82 +199,66 @@ func (c *compiler) validateSuperUsage(info classInfo, method methodDecl) {
 			return
 		}
 	}
-	var walkStmt func(stmt stmtDecl)
-	walkStmt = func(stmt stmtDecl) {
-		switch stmt.kind {
-		case stmtKindVar:
-			walk(stmt.vr.value)
-		case stmtKindReturn:
-			walk(stmt.ret.value)
-		case stmtKindYield:
-			walk(stmt.yld.value)
-		case stmtKindIf:
-			walk(stmt.if_.condition)
-			for _, nested := range stmt.if_.consequence.stmts {
-				walkStmt(nested)
-			}
-			if stmt.if_.alternativeIf != nil {
-				for _, nested := range stmt.if_.alternativeIf.consequence.stmts {
-					walkStmt(nested)
-				}
-			}
-			if stmt.if_.alternativeBlk != nil {
-				for _, nested := range stmt.if_.alternativeBlk.stmts {
-					walkStmt(nested)
-				}
-			}
-		case stmtKindWhile:
-			walk(stmt.whl.condition)
-			for _, nested := range stmt.whl.body.stmts {
-				walkStmt(nested)
-			}
-		case stmtKindFor:
-			if stmt.for_.init != nil {
-				walkStmt(*stmt.for_.init)
-			}
-			walk(stmt.for_.condition)
-			walk(stmt.for_.update)
-			walk(stmt.for_.iterable)
-			for _, nested := range stmt.for_.body.stmts {
-				walkStmt(nested)
-			}
-		case stmtKindWhen:
-			walk(stmt.when.expr)
-			for _, cc := range stmt.when.cases {
-				for _, value := range cc.values {
-					walk(value)
-				}
-				for _, nested := range cc.body.stmts {
-					walkStmt(nested)
-				}
-			}
-			if stmt.when.defaultCase != nil {
-				for _, nested := range stmt.when.defaultCase.stmts {
-					walkStmt(nested)
-				}
-			}
-		case stmtKindBlock:
-			for _, nested := range stmt.blk.stmts {
-				walkStmt(nested)
-			}
-		case stmtKindExpr:
-			walk(stmt.expr)
-		case stmtKindTry:
-			for _, nested := range stmt.try_.body.stmts {
-				walkStmt(nested)
-			}
-			for _, nested := range stmt.try_.catchBody.stmts {
-				walkStmt(nested)
-			}
-		case stmtKindDefer:
-			for _, nested := range stmt.dfr.body.stmts {
-				walkStmt(nested)
-			}
+	var walkStmtBlock func(block *frontend.BlockStmt)
+	var walkStmt func(stmt frontend.Statement)
+	walkStmtBlock = func(block *frontend.BlockStmt) {
+		if block == nil {
+			return
+		}
+		for _, nested := range block.Stmts {
+			walkStmt(nested)
 		}
 	}
-	_ = walkExpression
-	walk(method.exprBody)
-	for _, stmt := range method.body.stmts {
-		walkStmt(stmt)
+	walkStmt = func(stmt frontend.Statement) {
+		switch s := stmt.(type) {
+		case *frontend.VarStmt:
+			walk(s.Value)
+		case *frontend.ReturnStmt:
+			walk(s.Value)
+		case *frontend.YieldStmt:
+			walk(s.Value)
+		case *frontend.IfStmt:
+			walk(s.Condition)
+			walkStmtBlock(s.Consequence)
+			// Mirror the historical traversal shape: an else-if chain is
+			// inspected one alternative level deep.
+			if altIf, ok := s.Alternative.(*frontend.IfStmt); ok {
+				walkStmtBlock(altIf.Consequence)
+			}
+			if altBlk, ok := s.Alternative.(*frontend.BlockStmt); ok {
+				walkStmtBlock(altBlk)
+			}
+		case *frontend.WhileStmt:
+			walk(s.Condition)
+			walkStmtBlock(s.Body)
+		case *frontend.ForStmt:
+			if s.Init != nil {
+				walkStmt(s.Init)
+			}
+			walk(s.Condition)
+			walk(s.Update)
+			walk(s.Iterable)
+			walkStmtBlock(s.Body)
+		case *frontend.WhenStmt:
+			walk(s.Expr)
+			for _, cc := range s.Cases {
+				for _, value := range cc.Values {
+					walk(value)
+				}
+				walkStmtBlock(cc.Body)
+			}
+			walkStmtBlock(s.DefaultCase)
+		case *frontend.BlockStmt:
+			walkStmtBlock(s)
+		case *frontend.ExprStatement:
+			walk(s.Expr)
+		case *frontend.TryStmt:
+			walkStmtBlock(s.Body)
+			walkStmtBlock(s.CatchBody)
+		case *frontend.DeferStmt:
+			walkStmtBlock(s.Body)
+		}
 	}
+	walk(method.ExprBody)
+	walkStmtBlock(method.Body)
 }

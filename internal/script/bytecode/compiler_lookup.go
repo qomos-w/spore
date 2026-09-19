@@ -66,8 +66,8 @@ func (c *compiler) lookupMethodOnType(typeName string, methodName string) (membe
 			return memberLookup{}, false
 		}
 		for _, m := range cls.methods {
-			if m.name == methodName {
-				return memberLookup{owner: cls.name, access: m.access, returnType: c.resolveType(m.returnType), methodDecl: m}, true
+			if m.Name.Value == methodName {
+				return memberLookup{owner: cls.name, access: methodAccess(m), returnType: c.resolveType(funReturnType(m))}, true
 			}
 		}
 		className = cls.parent
@@ -82,8 +82,8 @@ func (c *compiler) lookupMethodOnAncestor(className string, methodName string) (
 			return memberLookup{}, false
 		}
 		for _, m := range cls.methods {
-			if m.name == methodName {
-				return memberLookup{owner: cls.name, access: m.access, returnType: c.resolveType(m.returnType), methodDecl: m}, true
+			if m.Name.Value == methodName {
+				return memberLookup{owner: cls.name, access: methodAccess(m), returnType: c.resolveType(funReturnType(m))}, true
 			}
 		}
 		className = cls.parent

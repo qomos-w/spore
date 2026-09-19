@@ -1,0 +1,43 @@
+== main ==
+source="" localCount=0
+  0000 HALT                         0 line=0
+== fun check ==
+source="check" localCount=1
+  0000 LOAD_LOCAL                   0 line=0
+  0001 GET_FIELD                    0 line=0
+  0002 ENUM_VALUE                   1 line=0
+  0003 EQ                           0 line=0
+  0004 JUMP_IF_FALSE                9 line=0
+  0005 LOAD_LOCAL                   0 line=0
+  0006 GET_FIELD                    2 line=0
+  0007 IS                           3 line=0
+  0008 JUMP                         10 line=0
+  0009 PUSH_FALSE                   0 line=0
+  0010 RETURN                       0 line=0
+  0011 RETURN_VOID                  0 line=0
+  const[0]=string(color)
+  const[1]=enumConst{Color,6}
+  const[2]=string(color)
+  const[3]=string(Color)
+== fun make ==
+source="make" localCount=1
+  0000 PUSH_INT                     0 line=0
+  0001 PUSH_INT                     1 line=0
+  0002 ENUM_VALUE                   2 line=0
+  0003 NEW_STRUCT_INSTANCE          3 line=0
+  0004 STORE_LOCAL                  0 line=0
+  0005 LOAD_LOCAL                   0 line=0
+  0006 RETURN                       0 line=0
+  0007 RETURN_VOID                  0 line=0
+  const[0]=int32(1)
+  const[1]=int32(2)
+  const[2]=enumConst{Color,6}
+  const[3]=string(Pixel)
+== fun value ==
+source="value" localCount=0
+  0000 ENUM_VALUE                   0 line=0
+  0001 AS                           1 line=0
+  0002 RETURN                       0 line=0
+  0003 RETURN_VOID                  0 line=0
+  const[0]=enumConst{Color,0}
+  const[1]=string(int)

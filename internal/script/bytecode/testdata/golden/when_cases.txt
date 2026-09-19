@@ -1,0 +1,94 @@
+== main ==
+source="" localCount=0
+  0000 HALT                         0 line=0
+== fun classify ==
+source="classify" localCount=2
+  0000 LOAD_LOCAL                   0 line=0
+  0001 STORE_LOCAL                  1 line=0
+  0002 LOAD_LOCAL                   1 line=0
+  0003 PUSH_INT                     0 line=0
+  0004 EQ                           0 line=0
+  0005 JUMP_IF_FALSE                13 line=0
+  0006 LOAD_LOCAL                   0 line=0
+  0007 PUSH_INT                     1 line=0
+  0008 GT_INT                       0 line=0
+  0009 JUMP_IF_FALSE                13 line=0
+  0010 PUSH_INT                     2 line=0
+  0011 RETURN                       0 line=0
+  0012 JUMP                         22 line=0
+  0013 LOAD_LOCAL                   1 line=0
+  0014 PUSH_INT                     3 line=0
+  0015 EQ                           0 line=0
+  0016 JUMP_IF_FALSE                20 line=0
+  0017 PUSH_INT                     4 line=0
+  0018 RETURN                       0 line=0
+  0019 JUMP                         22 line=0
+  0020 PUSH_INT                     5 line=0
+  0021 RETURN                       0 line=0
+  0022 PUSH_INT                     6 line=0
+  0023 RETURN                       0 line=0
+  0024 RETURN_VOID                  0 line=0
+  const[0]=int32(1)
+  const[1]=int32(0)
+  const[2]=int32(100)
+  const[3]=int32(2)
+  const[4]=int32(200)
+  const[5]=int32(999)
+  const[6]=int32(0)
+== fun kindName ==
+source="kindName" localCount=2
+  0000 LOAD_LOCAL                   0 line=0
+  0001 STORE_LOCAL                  1 line=0
+  0002 LOAD_LOCAL                   1 line=0
+  0003 IS                           0 line=0
+  0004 JUMP_IF_FALSE                8 line=0
+  0005 PUSH_STRING                  1 line=0
+  0006 RETURN                       0 line=0
+  0007 JUMP                         10 line=0
+  0008 PUSH_STRING                  2 line=0
+  0009 RETURN                       0 line=0
+  0010 PUSH_STRING                  3 line=0
+  0011 RETURN                       0 line=0
+  0012 RETURN_VOID                  0 line=0
+  const[0]=string(Kind)
+  const[1]=string(kind)
+  const[2]=string(other)
+  const[3]=string(none)
+== fun label ==
+source="label" localCount=2
+  0000 LOAD_LOCAL                   0 line=0
+  0001 STORE_LOCAL                  1 line=0
+  0002 LOAD_LOCAL                   1 line=0
+  0003 PUSH_INT                     0 line=0
+  0004 EQ                           0 line=0
+  0005 JUMP_IF_FALSE                9 line=0
+  0006 PUSH_STRING                  1 line=0
+  0007 RETURN                       0 line=0
+  0008 JUMP                         25 line=0
+  0009 LOAD_LOCAL                   1 line=0
+  0010 PUSH_INT                     2 line=0
+  0011 EQ                           0 line=0
+  0012 JUMP_IF_FALSE                16 line=0
+  0013 PUSH_STRING                  3 line=0
+  0014 RETURN                       0 line=0
+  0015 JUMP                         25 line=0
+  0016 LOAD_LOCAL                   1 line=0
+  0017 PUSH_INT                     4 line=0
+  0018 EQ                           0 line=0
+  0019 JUMP_IF_FALSE                23 line=0
+  0020 PUSH_STRING                  5 line=0
+  0021 RETURN                       0 line=0
+  0022 JUMP                         25 line=0
+  0023 PUSH_STRING                  6 line=0
+  0024 RETURN                       0 line=0
+  0025 PUSH_STRING                  7 line=0
+  0026 RETURN                       0 line=0
+  0027 RETURN_VOID                  0 line=0
+  const[0]=int32(1)
+  const[1]=string(one)
+  const[2]=int32(2)
+  const[3]=string(few)
+  const[4]=int32(3)
+  const[5]=string(few)
+  const[6]=string(many)
+  const[7]=string(?)

@@ -1,0 +1,23 @@
+== main ==
+source="" localCount=0
+  0000 HALT                         0 line=0
+== fun main ==
+source="main" localCount=2
+  0000 PUSH_INT                     0 line=0
+  0001 STORE_LOCAL                  0 line=0
+  0002 PUSH_INT                     1 line=0
+  0003 STORE_LOCAL                  1 line=0
+  0004 LOAD_LOCAL                   0 line=0
+  0005 LOAD_LOCAL                   1 line=0
+  0006 PUSH_INT                     2 line=0
+  0007 MUL_INT                      0 line=0
+  0008 ADD_INT                      0 line=0
+  0009 STORE_LOCAL_POP              0 line=0
+  0010 LOAD_LOCAL                   0 line=0
+  0011 LOAD_LOCAL                   1 line=0
+  0012 SUB_INT                      0 line=0
+  0013 RETURN                       0 line=0
+  0014 RETURN_VOID                  0 line=0
+  const[0]=int32(1)
+  const[1]=int32(2)
+  const[2]=int32(3)

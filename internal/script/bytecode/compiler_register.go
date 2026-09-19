@@ -91,11 +91,12 @@ func (c *compiler) registerClasses(v *vm.VM) {
 	// Pass 1.6: Validate override methods exist in parent class.
 	for className, info := range c.classes {
 		for _, method := range info.methods {
-			if !method.isOverride {
+			if !method.IsOverride {
 				continue
 			}
+			methodName := method.Name.Value
 			if info.parent == "" {
-				c.addCompileError("override_without_parent", "bytecode/oop/override", fmt.Sprintf("method %q in class %q is marked override but class has no parent", method.name, className))
+				c.addCompileError("override_without_parent", "bytecode/oop/override", fmt.Sprintf("method %q in class %q is marked override but class has no parent", methodName, className))
 				continue
 			}
 			parentInfo, ok := c.classes[info.parent]
@@ -104,21 +105,23 @@ func (c *compiler) registerClasses(v *vm.VM) {
 			}
 			found := false
 			for _, parentMethod := range parentInfo.methods {
-				if parentMethod.name == method.name {
-					if len(parentMethod.paramNames) != len(method.paramNames) {
-						c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parameter count %d does not match parent count %d", method.name, len(method.paramNames), len(parentMethod.paramNames)), fmt.Sprintf("%d parameter(s)", len(parentMethod.paramNames)), fmt.Sprintf("%d parameter(s)", len(method.paramNames)))
+				if parentMethod.Name.Value == methodName {
+					paramCount := len(method.Params)
+					parentParamCount := len(parentMethod.Params)
+					if parentParamCount != paramCount {
+						c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parameter count %d does not match parent count %d", methodName, paramCount, parentParamCount), fmt.Sprintf("%d parameter(s)", parentParamCount), fmt.Sprintf("%d parameter(s)", paramCount))
 					} else if !methodReturnsCompatible(method, parentMethod) {
-						c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: return type %q does not match parent return type %q", method.name, method.returnTypeName(), parentMethod.returnTypeName()), parentMethod.returnTypeName(), method.returnTypeName())
+						c.addCompileErrorWithTypes("override_signature_mismatch", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: return type %q does not match parent return type %q", methodName, funReturnType(method), funReturnType(parentMethod)), funReturnType(parentMethod), funReturnType(method))
 					}
-					if !parentMethod.isOpen {
-						c.addCompileError("override_parent_method_not_open", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parent method in class %q is not open", method.name, info.parent))
+					if !parentMethod.IsOpen {
+						c.addCompileError("override_parent_method_not_open", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: parent method in class %q is not open", methodName, info.parent))
 					}
 					found = true
 					break
 				}
 			}
 			if !found {
-				c.addCompileError("override_method_not_found", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: method not found in parent class %q", method.name, info.parent))
+				c.addCompileError("override_method_not_found", "bytecode/oop/override", fmt.Sprintf("cannot override method %q: method not found in parent class %q", methodName, info.parent))
 			}
 		}
 	}
@@ -134,17 +137,18 @@ func (c *compiler) registerClasses(v *vm.VM) {
 			// Check each interface method is provided by the class.
 			for _, ifaceMethod := range iface.methods {
 				found := false
+				expectedParams := len(ifaceMethod.Params)
 				for _, classMethod := range info.methods {
-					if classMethod.name == ifaceMethod.name {
+					if classMethod.Name.Value == ifaceMethod.Name.Value {
 						found = true
-						if len(classMethod.paramNames) != ifaceMethod.paramCount {
-							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q has parameter count %d, expected %d", className, ifaceName, ifaceMethod.name, len(classMethod.paramNames), ifaceMethod.paramCount), fmt.Sprintf("%d parameter(s)", ifaceMethod.paramCount), fmt.Sprintf("%d parameter(s)", len(classMethod.paramNames)))
+						if params := len(classMethod.Params); params != expectedParams {
+							c.addCompileErrorWithTypes("interface_signature_mismatch", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but method %q has parameter count %d, expected %d", className, ifaceName, ifaceMethod.Name.Value, params, expectedParams), fmt.Sprintf("%d parameter(s)", expectedParams), fmt.Sprintf("%d parameter(s)", params))
 						}
 						break
 					}
 				}
 				if !found {
-					c.addCompileError("interface_method_missing", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but is missing method %q", className, ifaceName, ifaceMethod.name))
+					c.addCompileError("interface_method_missing", "bytecode/oop/interface", fmt.Sprintf("class %q implements interface %q but is missing method %q", className, ifaceName, ifaceMethod.Name.Value))
 				}
 			}
 		}
@@ -168,7 +172,7 @@ func (c *compiler) registerClasses(v *vm.VM) {
 		class.ComputeFieldOffsets()
 
 		for _, method := range classInfo.methods {
-			methodKey := className + "." + method.name
+			methodKey := className + "." + method.Name.Value
 			funcDef := v.FuncReg().GetFunction(methodKey)
 			if funcDef != nil {
 				capturedFunc := funcDef
@@ -178,12 +182,12 @@ func (c *compiler) registerClasses(v *vm.VM) {
 					copy(allArgs[1:], args)
 					return capturedFunc.ExecuteBody(v, allArgs)
 				}
-				if method.isOverride {
-					class.OverrideMethod(method.name, impl)
-				} else if method.isOpen {
-					class.AddOpenMethod(method.name, impl)
+				if method.IsOverride {
+					class.OverrideMethod(method.Name.Value, impl)
+				} else if method.IsOpen {
+					class.AddOpenMethod(method.Name.Value, impl)
 				} else {
-					class.AddMethod(method.name, impl)
+					class.AddMethod(method.Name.Value, impl)
 				}
 			}
 		}
@@ -197,7 +201,7 @@ func (c *compiler) registerClasses(v *vm.VM) {
 	for ifaceName, ifaceInfo := range c.interfaces {
 		methods := make([]vm.InterfaceMethodSig, len(ifaceInfo.methods))
 		for i, m := range ifaceInfo.methods {
-			methods[i] = vm.NewInterfaceMethodSig(m.name, m.paramCount)
+			methods[i] = vm.NewInterfaceMethodSig(m.Name.Value, len(m.Params))
 		}
 		ifaceReg.RegisterInterface(vm.NewInterfaceDef(ifaceName, methods))
 	}
