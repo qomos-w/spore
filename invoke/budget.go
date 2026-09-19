@@ -13,7 +13,7 @@ import "time"
 //     ExecutionState.HostCalls.
 //   - MaxDuration: enforced, but through the context rather than
 //     ExecutionState. The invocation path derives the context from the duration
-//     budget (binding.ExecutableRegistry.Invoke and script.CallContext.context
+//     budget (binding.Registry.Invoke and script.CallContext.context
 //     apply the same "earlier caller deadline wins, otherwise WithTimeout"
 //     semantics); CheckExecution then surfaces the resulting context error once
 //     the deadline elapses. Duration deliberately flows through ctx, so it is

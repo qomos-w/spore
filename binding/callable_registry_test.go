@@ -30,22 +30,22 @@ type bindEnvelope struct {
 }
 
 // ============================================================================
-// CallableRegistry tests
+// Unified registry (callable plane) tests
 // ============================================================================
 
-func TestCallableRegistry_RegisterAndLookup(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RegisterAndLookup(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc, err := schema.DescribeGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("DescribeGoFunction: %v", err)
 	}
 
-	if err := reg.Register(desc); err != nil {
+	if err := reg.RegisterCallable(desc); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	found, ok := reg.Lookup("greet")
+	found, ok := reg.LookupCallable("greet")
 	if !ok {
 		t.Fatal("expected to find registered callable")
 	}
@@ -54,8 +54,8 @@ func TestCallableRegistry_RegisterAndLookup(t *testing.T) {
 	}
 }
 
-func TestCallableRegistry_RegisterGoFunction(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RegisterGoFunction(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestCallableRegistry_RegisterGoFunction(t *testing.T) {
 	}
 
 	// Should be lookable
-	found, ok := reg.Lookup("greet")
+	found, ok := reg.LookupCallable("greet")
 	if !ok {
 		t.Fatal("expected to find registered callable")
 	}
@@ -78,34 +78,34 @@ func TestCallableRegistry_RegisterGoFunction(t *testing.T) {
 	}
 }
 
-func TestCallableRegistry_RejectsDuplicateName(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RejectsDuplicateName(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc, err := schema.DescribeGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("DescribeGoFunction: %v", err)
 	}
 
-	if err := reg.Register(desc); err != nil {
+	if err := reg.RegisterCallable(desc); err != nil {
 		t.Fatalf("first Register: %v", err)
 	}
 
-	if err := reg.Register(desc); err == nil {
+	if err := reg.RegisterCallable(desc); err == nil {
 		t.Fatal("expected error for duplicate registration, got nil")
 	}
 }
 
-func TestCallableRegistry_RejectsEmptyName(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RejectsEmptyName(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc := schema.CallableDesc{Name: ""}
-	if err := reg.Register(desc); err == nil {
+	if err := reg.RegisterCallable(desc); err == nil {
 		t.Fatal("expected error for empty name, got nil")
 	}
 }
 
-func TestCallableRegistry_RejectsMixedUnaryAndStreamingReturns(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RejectsMixedUnaryAndStreamingReturns(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc := schema.CallableDesc{
 		Name:    "mixed",
@@ -117,13 +117,13 @@ func TestCallableRegistry_RejectsMixedUnaryAndStreamingReturns(t *testing.T) {
 		},
 	}
 
-	if err := reg.Register(desc); err == nil {
+	if err := reg.RegisterCallable(desc); err == nil {
 		t.Fatal("expected error for mixed unary+streaming returns, got nil")
 	}
 }
 
-func TestCallableRegistry_RegisterStreamingCallable(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RegisterStreamingCallable(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc, err := schema.NewStreamingCallableDesc(
 		"stream",
@@ -136,11 +136,11 @@ func TestCallableRegistry_RegisterStreamingCallable(t *testing.T) {
 		t.Fatalf("NewStreamingCallableDesc: %v", err)
 	}
 
-	if err := reg.Register(desc); err != nil {
+	if err := reg.RegisterCallable(desc); err != nil {
 		t.Fatalf("Register streaming: %v", err)
 	}
 
-	found, ok := reg.Lookup("stream")
+	found, ok := reg.LookupCallable("stream")
 	if !ok {
 		t.Fatal("expected to find streaming callable")
 	}
@@ -149,23 +149,23 @@ func TestCallableRegistry_RegisterStreamingCallable(t *testing.T) {
 	}
 }
 
-func TestCallableRegistry_LookupMissing(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_LookupMissing(t *testing.T) {
+	reg := binding.NewRegistry()
 
-	_, ok := reg.Lookup("nonexistent")
+	_, ok := reg.LookupCallable("nonexistent")
 	if ok {
 		t.Fatal("expected Lookup to return false for unregistered callable")
 	}
 }
 
-func TestCallableRegistry_ListPreservesRegistrationOrder(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_ListPreservesRegistrationOrder(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	_, _ = reg.RegisterGoFunction("alpha", greet)
 	_, _ = reg.RegisterGoFunction("beta", touch)
 	_, _ = reg.RegisterGoFunction("gamma", fail)
 
-	list := reg.List()
+	list := reg.ListCallables()
 	if len(list) != 3 {
 		t.Fatalf("expected 3 callables, got %d", len(list))
 	}
@@ -180,16 +180,16 @@ func TestCallableRegistry_ListPreservesRegistrationOrder(t *testing.T) {
 	}
 }
 
-func TestCallableRegistry_RegisterGoFunction_RejectsInvalidFunction(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RegisterGoFunction_RejectsInvalidFunction(t *testing.T) {
+	reg := binding.NewRegistry()
 	_, err := reg.RegisterGoFunction("bad", 123)
 	if err == nil {
 		t.Fatal("expected error for non-function")
 	}
 }
 
-func TestCallableRegistry_RegisterGoFunction_RejectsDuplicate(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_RegisterGoFunction_RejectsDuplicate(t *testing.T) {
+	reg := binding.NewRegistry()
 	_, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("first RegisterGoFunction: %v", err)
@@ -200,8 +200,8 @@ func TestCallableRegistry_RegisterGoFunction_RejectsDuplicate(t *testing.T) {
 	}
 }
 
-func TestCallableRegistry_ListClonesStreamingDescriptor(t *testing.T) {
-	reg := binding.NewCallableRegistry()
+func TestRegistry_ListClonesStreamingDescriptor(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc, err := schema.NewStreamingCallableDesc(
 		"stream",
@@ -214,11 +214,11 @@ func TestCallableRegistry_ListClonesStreamingDescriptor(t *testing.T) {
 		t.Fatalf("NewStreamingCallableDesc: %v", err)
 	}
 
-	if err := reg.Register(desc); err != nil {
+	if err := reg.RegisterCallable(desc); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	list := reg.List()
+	list := reg.ListCallables()
 	if len(list) != 1 {
 		t.Fatalf("expected 1 callable, got %d", len(list))
 	}
@@ -226,7 +226,7 @@ func TestCallableRegistry_ListClonesStreamingDescriptor(t *testing.T) {
 	// Mutating the returned list entry should not affect the registry
 	list[0].Name = "mutated"
 
-	found, ok := reg.Lookup("stream")
+	found, ok := reg.LookupCallable("stream")
 	if !ok {
 		t.Fatal("expected to find original streaming callable after list mutation")
 	}

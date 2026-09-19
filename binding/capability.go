@@ -20,18 +20,9 @@ type RegisteredCapability struct {
 	Values    map[string]any
 }
 
-// CapabilityRegistry stores and dispatches native capabilities.
-type CapabilityRegistry interface {
-	Register(cap RegisteredCapability) error
-	Describe(name string) (CapabilityDesc, bool)
-	DescribeAll() []CapabilityDesc
-	FindCallable(capabilityName, callableName string) (CapabilityCallable, bool)
-	FindObject(capabilityName, objectName string) (schema.ObjectDesc, bool)
-	FindInterface(capabilityName, interfaceName string) (schema.InterfaceDesc, bool)
-	FindTypeAlias(capabilityName, aliasName string) (schema.TypeDesc, bool)
-	FindValue(capabilityName, valueName string) (CapabilityValueDesc, any, bool)
-	Invoke(ctx context.Context, capabilityName, callableName string, input any) (any, error)
-}
+// The capability plane is stored by the unified Registry (registry.go); the
+// capability descriptors and callable contract below remain the registration
+// units that plane consumes.
 
 func cloneCapabilityDesc(desc CapabilityDesc) CapabilityDesc {
 	cloned := CapabilityDesc{
