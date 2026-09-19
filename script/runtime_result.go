@@ -2,6 +2,8 @@ package script
 
 import (
 	"fmt"
+
+	"github.com/qomos-w/spore/internal/script/bytecode"
 )
 
 // This file holds Result, the public value surface returned from Runtime calls,
@@ -56,7 +58,7 @@ func (r Result) DecodeInto(dst any) error {
 	if dst == nil {
 		return fmt.Errorf("decode target cannot be nil")
 	}
-	return decodeInto(dst, r.Value)
+	return bytecode.DecodeHostValue(dst, r.Value)
 }
 
 // Unwrap returns a single error that merges both host-side failure and script
