@@ -4,7 +4,8 @@ import { DecodeError, EncodeError } from "../src/codec.js";
 import { SchemaRegistry, type SchemaEntry } from "../src/registry.js";
 import type { ObjectDesc, TypeDesc } from "../src/schema.js";
 
-const MAGIC = new Uint8Array([0x54, 0x42, 0x43, 0x02]);
+const MAGIC = new Uint8Array([0x54, 0x42, 0x43]); // "TBC"
+const WIRE_VERSION = 0x03;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,18 +47,29 @@ function buildRegistry(): SchemaRegistry {
 describe("BinaryCodec header", () => {
   const codec = new BinaryCodec();
 
-  it("starts every payload with the TBC magic", () => {
+  it("starts every payload with the TBC magic + explicit wire version", () => {
     const out = codec.encode({ kind: "scalar", name: "bool" }, true);
-    expect(Array.from(out.slice(0, 4))).toEqual(Array.from(MAGIC));
+    expect(Array.from(out.slice(0, 3))).toEqual(Array.from(MAGIC));
+    expect(out[3]).toBe(WIRE_VERSION);
   });
 
   it("rejects payloads with invalid magic", () => {
-    const bad = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x01]);
+    const bad = new Uint8Array([0x00, 0x00, 0x00, WIRE_VERSION, 0x01]);
     expect(() => codec.decode({ kind: "scalar", name: "bool" }, bad)).toThrow(DecodeError);
   });
 
+  it("rejects the legacy glued-on version (TBC\\x02)", () => {
+    const legacy = new Uint8Array([0x54, 0x42, 0x43, 0x02, 0x02]);
+    expect(() => codec.decode({ kind: "scalar", name: "bool" }, legacy)).toThrow(DecodeError);
+  });
+
+  it("rejects an unknown wire version", () => {
+    const unknown = new Uint8Array([0x54, 0x42, 0x43, 0x7f, 0x02]);
+    expect(() => codec.decode({ kind: "scalar", name: "bool" }, unknown)).toThrow(DecodeError);
+  });
+
   it("rejects truncated payloads", () => {
-    const bad = new Uint8Array([0x54, 0x42]);
+    const bad = new Uint8Array([0x54, 0x42, 0x43]);
     expect(() => codec.decode({ kind: "scalar", name: "bool" }, bad)).toThrow(DecodeError);
   });
 
@@ -319,7 +331,7 @@ describe("BinaryCodec validation", () => {
 
   it("rejects unknown tag during decode", () => {
     const desc: TypeDesc = { kind: "scalar", name: "int32" };
-    const bad = new Uint8Array([0x54, 0x42, 0x43, 0x01, 0xff]); // magic + bad tag
+    const bad = new Uint8Array([0x54, 0x42, 0x43, WIRE_VERSION, 0xff]); // header + bad tag
     expect(() => codec.decode(desc, bad)).toThrow(DecodeError);
   });
 });

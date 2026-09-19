@@ -51,7 +51,7 @@ func TestBinaryCodec_ArrayOfStructNotEntrySeq(t *testing.T) {
 
 	// First wire byte after the magic header must be TAG_ARRAY (0x09), not
 	// TAG_ENTRY_SEQUENCE (0x0B).
-	if got := view.Data[len(binaryMagic)]; got != binaryTagArray {
+	if got := view.Data[binaryHeaderLen]; got != binaryTagArray {
 		t.Fatalf("expected TAG_ARRAY(0x09) after magic, got 0x%02x", got)
 	}
 
@@ -105,8 +105,8 @@ func TestBinaryCodec_EmptyArrayRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if view.Data[len(binaryMagic)] != binaryTagArray {
-		t.Fatalf("expected TAG_ARRAY for empty []string, got 0x%02x", view.Data[len(binaryMagic)])
+	if view.Data[binaryHeaderLen] != binaryTagArray {
+		t.Fatalf("expected TAG_ARRAY for empty []string, got 0x%02x", view.Data[binaryHeaderLen])
 	}
 
 	var got []string
@@ -138,9 +138,9 @@ func TestBinaryCodec_MapStillEntrySequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if view.Data[len(binaryMagic)] != binaryTagEntrySequence {
+	if view.Data[binaryHeaderLen] != binaryTagEntrySequence {
 		t.Fatalf("expected TAG_ENTRY_SEQUENCE(0x0B) for map kind, got 0x%02x",
-			view.Data[len(binaryMagic)])
+			view.Data[binaryHeaderLen])
 	}
 	decoded, err := codec.Decode(view)
 	if err != nil {

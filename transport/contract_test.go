@@ -1051,8 +1051,8 @@ func TestBinaryCodec_Envelope_BinaryCarriesBinaryPayload(t *testing.T) {
 	if env.Kind != transport.EnvelopeKindBinary {
 		t.Fatalf("expected binary envelope, got %s", env.Kind)
 	}
-	if len(env.View.Data) < 4 || string(env.View.Data[:4]) != "TBC\x02" {
-		t.Fatalf("expected BinaryCodec magic header, got %#v", env.View.Data)
+	if len(env.View.Data) < 4 || string(env.View.Data[:3]) != "TBC" || env.View.Data[3] != 0x03 {
+		t.Fatalf("expected BinaryCodec magic+version header, got %#v", env.View.Data)
 	}
 	decoded, err := codec.Decode(env.View)
 	if err != nil {

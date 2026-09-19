@@ -1,11 +1,12 @@
 /**
  * Binary codec for spore values.
  *
- * Wire format mirrors `transport.BinaryCodec` on the Go side: magic
- * `"TBC\x02"` followed by a self-describing tag stream. Tags identify the
- * value's wire shape; the supplied {@link TypeDesc} only chooses the JS
- * representation during decode (scalar `bytes` → Uint8Array vs number[],
- * scalar `int` → number vs bigint, etc.).
+ * Wire format mirrors `transport.BinaryCodec` on the Go side: the fixed magic
+ * `"TBC"` followed by an explicit wire-version byte (currently `0x03`), then a
+ * self-describing tag stream. Tags identify the value's wire shape; the
+ * supplied {@link TypeDesc} only chooses the JS representation during decode
+ * (scalar `bytes` → Uint8Array vs number[], scalar `int` → number vs bigint,
+ * etc.).
  *
  * Numeric range:
  *   - `int`, `byte`, `short`, `int32`, `uint32` decode to `number`
@@ -22,7 +23,15 @@
 import type { ObjectDesc, TypeDesc } from "./schema.js";
 import { DecodeError, EncodeError } from "./codec.js";
 
-const BINARY_MAGIC = new Uint8Array([0x54, 0x42, 0x43, 0x02]); // "TBC\x02"
+const BINARY_MAGIC = new Uint8Array([0x54, 0x42, 0x43]); // "TBC"
+// Wire version, written as the byte immediately after the magic. The version
+// is an explicit header field (decoupled from the magic bytes) and is the sole
+// determinant of frame acceptance — mirrors Go's binaryWireVersion.
+const BINARY_WIRE_VERSION = 0x03;
+// The version that used to be glued onto the magic ("TBC\x02"). Recognised only
+// so the decoder can reject it with a precise error; no legacy frames are in
+// flight (the only TBC consumer is the same-binary child-actor response path).
+const BINARY_LEGACY_WIRE_VERSION = 0x02;
 
 const TAG_NULL = 0x00;
 const TAG_BOOL_FALSE = 0x01;
@@ -54,26 +63,45 @@ export class BinaryCodec {
     const projected = projectForEncode(desc, value, "", objectFor);
     const w = new BinaryWriter();
     w.writeBytes(BINARY_MAGIC);
+    w.writeByte(BINARY_WIRE_VERSION);
     encodeValue(w, desc, projected, "", objectFor);
     return w.finish();
   }
 
   decode(desc: TypeDesc, data: Uint8Array, objectFor?: (name: string) => ObjectDesc | undefined): unknown {
-    if (data.length < BINARY_MAGIC.length) {
-      throw new DecodeError("", "binary decode: truncated header");
-    }
-    for (let i = 0; i < BINARY_MAGIC.length; i++) {
-      if (data[i] !== BINARY_MAGIC[i]) {
-        throw new DecodeError("", "binary decode: invalid magic/version");
-      }
-    }
-    const r = new BinaryReader(data, BINARY_MAGIC.length);
+    const payload = parseHeader(data);
+    const r = new BinaryReader(data, payload);
     const raw = decodeValue(r, "");
     if (!r.done()) {
       throw new DecodeError("", "binary decode: trailing bytes");
     }
     return canonicalize(desc, raw, "", objectFor);
   }
+}
+
+/**
+ * Validate the fixed magic preamble and the explicit wire version, returning
+ * the payload offset (header length). Frame acceptance is decided by the
+ * declared version byte alone — there is no payload-shape sniffing.
+ */
+function parseHeader(data: Uint8Array): number {
+  const headerLen = BINARY_MAGIC.length + 1;
+  if (data.length < headerLen) {
+    throw new DecodeError("", "binary decode: truncated header");
+  }
+  for (let i = 0; i < BINARY_MAGIC.length; i++) {
+    if (data[i] !== BINARY_MAGIC[i]) {
+      throw new DecodeError("", "binary decode: invalid magic");
+    }
+  }
+  const version = data[BINARY_MAGIC.length];
+  if (version === BINARY_WIRE_VERSION) {
+    return headerLen;
+  }
+  if (version === BINARY_LEGACY_WIRE_VERSION) {
+    throw new DecodeError("", `binary decode: unsupported legacy wire version ${version} (want ${BINARY_WIRE_VERSION})`);
+  }
+  throw new DecodeError("", `binary decode: unsupported wire version ${version} (want ${BINARY_WIRE_VERSION})`);
 }
 
 /** Build a mapping from field_N → logical field name for schema-typed structs. */
