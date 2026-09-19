@@ -7,6 +7,13 @@ import (
 )
 
 // Parse parses a config source string into a Config.
+//
+// A source with syntax errors reports every error it can in one pass instead of
+// stopping at the first: the result is a single *SyntaxError, or an aggregate
+// that SyntaxDiagnostics flattens into one Diagnostic per error. Recovery is
+// deliberately shallow — a damaged statement is dropped up to the end of its
+// line and parsing resumes at the next statement — so the parser stops as soon
+// as it reaches a construct it cannot resume from.
 func Parse(source string) (*Config, error) {
 	l := newLexer(source)
 	p := &parser{l: l}
@@ -26,93 +33,185 @@ func ParseFile(path string) (*Config, error) {
 type parser struct {
 	l   *lexer
 	cur token
+	// errs collects every syntax error reported during the parse. The parser
+	// recovers from a broken statement by dropping the rest of its line and
+	// resuming at the next statement, so one pass reports every reportable
+	// error instead of stopping at the first.
+	errs []*SyntaxError
 }
 
 func (p *parser) nextToken() {
 	p.cur = p.l.nextToken()
 }
 
+// curSyntaxError turns the current token into a syntax error. A lexer token
+// that carries its own diagnostic (an out-of-range numeric literal, for
+// example) keeps that diagnostic instead of being restated generically.
+func (p *parser) curSyntaxError() *SyntaxError {
+	if d := p.cur.diag; d != nil {
+		return &SyntaxError{
+			Code:     d.Code,
+			Message:  d.Message,
+			Hint:     d.Hint,
+			Line:     d.Line,
+			Col:      d.Col,
+			Expected: d.Expected,
+			Actual:   d.Actual,
+		}
+	}
+	return &SyntaxError{
+		Code:    CodeConfigParseError,
+		Message: p.cur.lexeme,
+		Line:    p.cur.line,
+		Col:     p.cur.col,
+	}
+}
+
+// unexpected builds the standard "wrong token here" error, preferring the
+// lexer's own diagnostic when the offending token carries one.
+func (p *parser) unexpected(expected string) *SyntaxError {
+	if p.cur.diag != nil {
+		return p.curSyntaxError()
+	}
+	return &SyntaxError{
+		Code:     CodeConfigParseError,
+		Message:  fmt.Sprintf("expected %s, got %q", expected, p.cur.lexeme),
+		Line:     p.cur.line,
+		Col:      p.cur.col,
+		Expected: expected,
+		Actual:   p.cur.lexeme,
+	}
+}
+
+// recordError collects a reported error. Nested parses return plain
+// *SyntaxError values, so the collected list stays flat.
+func (p *parser) recordError(err error) {
+	if err == nil {
+		return
+	}
+	if e, ok := err.(*SyntaxError); ok {
+		p.errs = append(p.errs, e)
+		return
+	}
+	p.errs = append(p.errs, &SyntaxError{Code: CodeConfigParseError, Message: err.Error()})
+}
+
+// syncStatement recovers after a reported error: it discards tokens up to the
+// next statement boundary (a newline at brace depth zero, or EOF). There is no
+// attempt at full recovery — once a construct is damaged, the rest of its line
+// is dropped and parsing resumes at the next statement.
+func (p *parser) syncStatement() {
+	if p.cur.typ == tokNewline || p.cur.typ == tokEOF {
+		return
+	}
+	depth := 0
+	for p.cur.typ != tokEOF {
+		switch p.cur.typ {
+		case tokLBrace, tokLBracket:
+			depth++
+		case tokRBrace, tokRBracket:
+			if depth > 0 {
+				depth--
+			}
+		case tokNewline:
+			if depth == 0 {
+				p.nextToken()
+				return
+			}
+		}
+		p.nextToken()
+	}
+}
+
+// parseResult returns the parse outcome: the config plus the aggregated syntax
+// errors, or the config alone when the source was clean.
+func (p *parser) parseResult(cfg *Config) (*Config, error) {
+	if len(p.errs) == 0 {
+		return cfg, nil
+	}
+	return nil, newSyntaxErrors(p.errs)
+}
+
 func (p *parser) parseConfig() (*Config, error) {
 	cfg := &Config{}
 	for p.cur.typ != tokEOF {
 		if p.cur.typ == tokError {
-			return nil, &parseError{Message: p.cur.lexeme, Line: p.cur.line, Col: p.cur.col}
+			p.recordError(p.curSyntaxError())
+			p.nextToken()
+			continue
 		}
 		if p.cur.typ == tokNewline {
 			p.nextToken()
 			continue
 		}
 		if p.cur.typ != tokIdent {
-			return nil, &parseError{
-				Message: fmt.Sprintf("expected identifier, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
+			// A closing brace left over from a construct already reported is
+			// residue, not a second defect: drop it silently so one damaged
+			// statement yields one error.
+			if len(p.errs) > 0 && (p.cur.typ == tokRBrace || p.cur.typ == tokRBracket) {
+				p.nextToken()
+				continue
 			}
-		}
-
-		if p.cur.lexeme == "struct" {
-			td, err := p.parseStructDef()
-			if err != nil {
-				return nil, err
-			}
-			cfg.Types = append(cfg.Types, td)
-			p.skipNewlines()
+			p.recordError(p.unexpected("identifier"))
+			p.syncStatement()
 			continue
 		}
 
-		if p.cur.lexeme == "pipeline" {
-			pl, err := p.parsePipelineBlock()
-			if err != nil {
-				return nil, err
+		var stmtErr error
+		switch p.cur.lexeme {
+		case "struct":
+			var td TypeDef
+			td, stmtErr = p.parseStructDef()
+			if stmtErr == nil {
+				cfg.Types = append(cfg.Types, td)
 			}
-			cfg.Pipelines = append(cfg.Pipelines, pl)
-			p.skipNewlines()
+		case "pipeline":
+			var pl PipelineAST
+			pl, stmtErr = p.parsePipelineBlock()
+			if stmtErr == nil {
+				cfg.Pipelines = append(cfg.Pipelines, pl)
+			}
+		default:
+			var kv KeyValue
+			kv, stmtErr = p.parseKeyValueOrBlock()
+			if stmtErr == nil {
+				cfg.Values = append(cfg.Values, kv)
+			}
+		}
+		if stmtErr != nil {
+			p.recordError(stmtErr)
+			// Resume at the next statement so the rest of the source still
+			// gets parsed and can report its own errors.
+			p.syncStatement()
 			continue
 		}
-
-		kv, err := p.parseKeyValueOrBlock()
-		if err != nil {
-			return nil, err
-		}
-		cfg.Values = append(cfg.Values, kv)
 		p.skipNewlines()
 	}
-	return cfg, nil
+	return p.parseResult(cfg)
 }
 
 func (p *parser) parseStructDef() (TypeDef, error) {
 	p.nextToken() // consume "struct"
 	if p.cur.typ != tokIdent {
-		return TypeDef{}, &parseError{
-			Message: fmt.Sprintf("expected struct name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return TypeDef{}, p.unexpected("struct name")
 	}
 	td := TypeDef{Name: p.cur.lexeme, Line: p.cur.line}
 	p.nextToken()
 	if p.cur.typ != tokLBrace {
-		return TypeDef{}, &parseError{
-			Message: fmt.Sprintf("expected '{', got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return TypeDef{}, p.unexpected("'{'")
 	}
 	p.nextToken()
 	p.skipNewlines()
 
 	for p.cur.typ != tokRBrace && p.cur.typ != tokEOF {
 		if p.cur.typ != tokIdent {
-			return TypeDef{}, &parseError{
-				Message: fmt.Sprintf("expected field name, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return TypeDef{}, p.unexpected("field name")
 		}
 		name := p.cur.lexeme
 		line := p.cur.line
 		p.nextToken()
 		if p.cur.typ != tokColon {
-			return TypeDef{}, &parseError{
-				Message: fmt.Sprintf("expected ':' after field name, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return TypeDef{}, p.unexpected("':' after field name")
 		}
 		p.nextToken()
 		typeText, err := p.parseTypeExpr()
@@ -127,7 +226,7 @@ func (p *parser) parseStructDef() (TypeDef, error) {
 	}
 
 	if p.cur.typ != tokRBrace {
-		return TypeDef{}, &parseError{
+		return TypeDef{}, &SyntaxError{
 			Message: "unterminated struct definition",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -138,10 +237,7 @@ func (p *parser) parseStructDef() (TypeDef, error) {
 
 func (p *parser) parseTypeExpr() (string, error) {
 	if p.cur.typ != tokIdent {
-		return "", &parseError{
-			Message: fmt.Sprintf("expected type name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return "", p.unexpected("type name")
 	}
 	name := p.cur.lexeme
 	p.nextToken()
@@ -170,10 +266,7 @@ func (p *parser) parseTypeExpr() (string, error) {
 		break
 	}
 	if p.cur.typ != tokGT {
-		return "", &parseError{
-			Message: fmt.Sprintf("expected '>' in type expression, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return "", p.unexpected("'>' in type expression")
 	}
 	b.WriteString(">")
 	p.nextToken()
@@ -195,11 +288,12 @@ func (p *parser) parseKeyValueOrBlock() (KeyValue, error) {
 		return KeyValue{Key: key, Value: val, Line: line}, nil
 	}
 
+	if p.cur.typ == tokError {
+		// The lexer rejected the lexeme that followed the key.
+		return KeyValue{}, p.curSyntaxError()
+	}
 	if p.cur.typ != tokColon {
-		return KeyValue{}, &parseError{
-			Message: fmt.Sprintf("expected ':' or '{', got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return KeyValue{}, p.unexpected("':' or '{'")
 	}
 	p.nextToken()
 
@@ -255,10 +349,7 @@ func (p *parser) parseValue() (Value, error) {
 				for p.cur.typ == tokDot {
 					p.nextToken() // consume "."
 					if p.cur.typ != tokIdent {
-						return Value{}, &parseError{
-							Message: fmt.Sprintf("expected identifier after '.', got %q", p.cur.lexeme),
-							Line:    p.cur.line, Col: p.cur.col,
-						}
+						return Value{}, p.unexpected("identifier after '.'")
 					}
 					parts = append(parts, p.cur.lexeme)
 					p.nextToken()
@@ -266,7 +357,7 @@ func (p *parser) parseValue() (Value, error) {
 				raw := strings.Join(parts, ".")
 				return Value{Kind: ValueRef, StrVal: raw, Raw: raw, Line: line}, nil
 			}
-			return Value{}, &parseError{
+			return Value{}, &SyntaxError{
 				Message: fmt.Sprintf("unexpected identifier %q in value position", name),
 				Line:    line, Col: p.cur.col,
 			}
@@ -277,11 +368,13 @@ func (p *parser) parseValue() (Value, error) {
 		p.nextToken()
 		p.skipNewlines()
 		return p.parseMapBody()
+	case tokError:
+		// The lexer rejected the literal itself (an out-of-range number, for
+		// example); report its diagnostic rather than restating it as a
+		// generic "expected value".
+		return Value{}, p.curSyntaxError()
 	default:
-		return Value{}, &parseError{
-			Message: fmt.Sprintf("expected value, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return Value{}, p.unexpected("value")
 	}
 }
 
@@ -304,7 +397,7 @@ func (p *parser) parseArray() (Value, error) {
 	}
 
 	if p.cur.typ != tokRBracket {
-		return Value{}, &parseError{
+		return Value{}, &SyntaxError{
 			Message: "unterminated array",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -334,10 +427,7 @@ func (p *parser) parseMapBody() (Value, error) {
 			keyLine = p.cur.line
 			p.nextToken()
 		default:
-			return Value{}, &parseError{
-				Message: fmt.Sprintf("expected map key, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return Value{}, p.unexpected("map key")
 		}
 
 		if p.cur.typ == tokLBrace {
@@ -356,7 +446,7 @@ func (p *parser) parseMapBody() (Value, error) {
 		}
 
 		if p.cur.typ != tokColon {
-			return Value{}, &parseError{
+			return Value{}, &SyntaxError{
 				Message: fmt.Sprintf("expected ':' or '{' after key %q, got %q", key, p.cur.lexeme),
 				Line:    p.cur.line, Col: p.cur.col,
 			}
@@ -376,7 +466,7 @@ func (p *parser) parseMapBody() (Value, error) {
 	}
 
 	if p.cur.typ != tokRBrace {
-		return Value{}, &parseError{
+		return Value{}, &SyntaxError{
 			Message: "unterminated map",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -394,17 +484,14 @@ func (p *parser) parseStructLiteralBody(typeName string, line int) (Value, error
 		}
 
 		if p.cur.typ != tokIdent {
-			return Value{}, &parseError{
-				Message: fmt.Sprintf("expected field name, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return Value{}, p.unexpected("field name")
 		}
 		fieldName := p.cur.lexeme
 		fieldLine := p.cur.line
 		p.nextToken()
 
 		if p.cur.typ != tokColon {
-			return Value{}, &parseError{
+			return Value{}, &SyntaxError{
 				Message: fmt.Sprintf("expected ':' after field %q, got %q", fieldName, p.cur.lexeme),
 				Line:    p.cur.line, Col: p.cur.col,
 			}
@@ -424,7 +511,7 @@ func (p *parser) parseStructLiteralBody(typeName string, line int) (Value, error
 	}
 
 	if p.cur.typ != tokRBrace {
-		return Value{}, &parseError{
+		return Value{}, &SyntaxError{
 			Message: fmt.Sprintf("unterminated struct literal %s", typeName),
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -444,19 +531,13 @@ func (p *parser) skipNewlines() {
 func (p *parser) parsePipelineBlock() (PipelineAST, error) {
 	p.nextToken() // consume "pipeline"
 	if p.cur.typ != tokIdent {
-		return PipelineAST{}, &parseError{
-			Message: fmt.Sprintf("expected pipeline name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return PipelineAST{}, p.unexpected("pipeline name")
 	}
 	name := p.cur.lexeme
 	line := p.cur.line
 	p.nextToken()
 	if p.cur.typ != tokLBrace {
-		return PipelineAST{}, &parseError{
-			Message: fmt.Sprintf("expected '{' after pipeline name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return PipelineAST{}, p.unexpected("'{' after pipeline name")
 	}
 	p.nextToken()
 	p.skipNewlines()
@@ -464,10 +545,7 @@ func (p *parser) parsePipelineBlock() (PipelineAST, error) {
 	var steps []PipelineStepAST
 	for p.cur.typ != tokRBrace && p.cur.typ != tokEOF {
 		if p.cur.typ != tokIdent {
-			return PipelineAST{}, &parseError{
-				Message: fmt.Sprintf("expected 'step' or 'parallel', got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return PipelineAST{}, p.unexpected("'step' or 'parallel'")
 		}
 		switch p.cur.lexeme {
 		case "step":
@@ -483,16 +561,13 @@ func (p *parser) parsePipelineBlock() (PipelineAST, error) {
 			}
 			steps = append(steps, parallelStep)
 		default:
-			return PipelineAST{}, &parseError{
-				Message: fmt.Sprintf("expected 'step' or 'parallel', got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return PipelineAST{}, p.unexpected("'step' or 'parallel'")
 		}
 		p.skipNewlines()
 	}
 
 	if p.cur.typ != tokRBrace {
-		return PipelineAST{}, &parseError{
+		return PipelineAST{}, &SyntaxError{
 			Message: "unterminated pipeline block",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -506,19 +581,13 @@ func (p *parser) parsePipelineBlock() (PipelineAST, error) {
 func (p *parser) parsePipelineStep() (PipelineStepAST, error) {
 	p.nextToken() // consume "step"
 	if p.cur.typ != tokIdent {
-		return PipelineStepAST{}, &parseError{
-			Message: fmt.Sprintf("expected step name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return PipelineStepAST{}, p.unexpected("step name")
 	}
 	name := p.cur.lexeme
 	line := p.cur.line
 	p.nextToken()
 	if p.cur.typ != tokLBrace {
-		return PipelineStepAST{}, &parseError{
-			Message: fmt.Sprintf("expected '{' after step name, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return PipelineStepAST{}, p.unexpected("'{' after step name")
 	}
 	p.nextToken()
 	p.skipNewlines()
@@ -526,70 +595,42 @@ func (p *parser) parsePipelineStep() (PipelineStepAST, error) {
 	step := PipelineStepAST{Name: name, Line: line}
 	for p.cur.typ != tokRBrace && p.cur.typ != tokEOF {
 		if p.cur.typ != tokIdent {
-			return PipelineStepAST{}, &parseError{
-				Message: fmt.Sprintf("expected step field name, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return PipelineStepAST{}, p.unexpected("step field name")
 		}
 		fieldName := p.cur.lexeme
 		fieldLine := p.cur.line
 		p.nextToken()
 		if p.cur.typ != tokColon {
-			return PipelineStepAST{}, &parseError{
+			return PipelineStepAST{}, &SyntaxError{
+				Code:    CodeConfigParseError,
 				Message: fmt.Sprintf("expected ':' after field %q, got %q", fieldName, p.cur.lexeme),
 				Line:    p.cur.line, Col: p.cur.col,
+				Actual: p.cur.lexeme,
 			}
 		}
 		p.nextToken()
 
-		switch fieldName {
-		case "invoke":
-			if p.cur.typ != tokStringLit {
-				return PipelineStepAST{}, &parseError{
-					Message: fmt.Sprintf("expected string for invoke, got %q", p.cur.lexeme),
-					Line:    p.cur.line, Col: p.cur.col,
-				}
-			}
-			step.Invoke = unquoteString(p.cur.lexeme)
-			p.nextToken()
-		case "input":
-			val, err := p.parseValue()
-			if err != nil {
-				return PipelineStepAST{}, err
-			}
-			step.Input = val
-		case "depends_on":
-			deps, err := p.parseStringArray()
-			if err != nil {
-				return PipelineStepAST{}, err
-			}
-			step.DependsOn = deps
-		case "timeout":
-			if p.cur.typ != tokStringLit {
-				return PipelineStepAST{}, &parseError{
-					Message: fmt.Sprintf("expected string for timeout, got %q", p.cur.lexeme),
-					Line:    p.cur.line, Col: p.cur.col,
-				}
-			}
-			step.Timeout = unquoteString(p.cur.lexeme)
-			p.nextToken()
-		case "when":
-			ref, err := p.parseRefExpr()
-			if err != nil {
-				return PipelineStepAST{}, err
-			}
-			step.When = ref
-		default:
-			return PipelineStepAST{}, &parseError{
-				Message: fmt.Sprintf("unknown step field %q", fieldName),
-				Line:    fieldLine, Col: p.cur.col,
-			}
+		spec, known := pipelineStepField(fieldName)
+		if !known {
+			// Report the bad field and keep parsing the rest of the step: the
+			// step boundary stays intact, so a following step is still parsed
+			// and can report its own problems.
+			p.recordError(p.unknownStepField(fieldName, fieldLine))
+			p.syncStatement()
+			continue
+		}
+
+		if err := p.parseStepFieldValue(&step, spec); err != nil {
+			p.recordError(err)
+			p.syncStatement()
+			continue
 		}
 		p.skipNewlines()
 	}
 
 	if p.cur.typ != tokRBrace {
-		return PipelineStepAST{}, &parseError{
+		return PipelineStepAST{}, &SyntaxError{
+			Code:    CodeConfigParseError,
 			Message: fmt.Sprintf("unterminated step block %q", name),
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -598,16 +639,97 @@ func (p *parser) parsePipelineStep() (PipelineStepAST, error) {
 	return step, nil
 }
 
+// unknownStepField reports a field name that is not in the canonical step-field
+// table, enumerating the accepted fields so the reader (typically an LLM) can
+// repair the source without a second lookup.
+func (p *parser) unknownStepField(fieldName string, line int) *SyntaxError {
+	suggestions := suggestStepFields(fieldName)
+	message := fmt.Sprintf("unknown step field %q: valid fields are %s", fieldName, pipelineStepFieldList())
+	if len(suggestions) > 0 {
+		message += fmt.Sprintf(" (did you mean %s?)", strings.Join(suggestions, " or "))
+	}
+	return &SyntaxError{
+		Code:        CodeConfigParseError,
+		Message:     message,
+		Hint:        "valid fields are " + pipelineStepFieldList(),
+		Line:        line,
+		Col:         p.cur.col,
+		Expected:    pipelineStepFieldList(),
+		Actual:      fieldName,
+		Suggestions: suggestions,
+	}
+}
+
+// parseStepFieldValue parses the value of one step field and stores it on the
+// step. The field table's ValueForm picks the grammar, so the parser and the
+// validators agree on a field's shape by construction rather than by
+// convention.
+func (p *parser) parseStepFieldValue(step *PipelineStepAST, spec pipelineStepFieldSpec) error {
+	switch spec.ValueForm {
+	case stepFormString:
+		if p.cur.typ == tokError {
+			return p.curSyntaxError()
+		}
+		if p.cur.typ != tokStringLit {
+			return &SyntaxError{
+				Code:    CodeConfigParseError,
+				Message: fmt.Sprintf("expected string for %s, got %q", spec.Name, p.cur.lexeme),
+				Line:    p.cur.line, Col: p.cur.col,
+				Expected: "string",
+				Actual:   p.cur.lexeme,
+			}
+		}
+		value := unquoteString(p.cur.lexeme)
+		p.nextToken()
+		switch spec.Name {
+		case PipelineStepFieldInvoke:
+			step.Invoke = value
+		case PipelineStepFieldTimeout:
+			step.Timeout = value
+		default:
+			// A string-valued field added to the table without a destination
+			// in the step AST must fail loudly instead of dropping its value.
+			return &SyntaxError{
+				Code:    CodeConfigParseError,
+				Message: fmt.Sprintf("step field %q has no destination in the step AST", spec.Name),
+				Line:    p.cur.line, Col: p.cur.col,
+			}
+		}
+	case stepFormStringArray:
+		deps, err := p.parseStringArray()
+		if err != nil {
+			return err
+		}
+		step.DependsOn = deps
+	case stepFormRef:
+		ref, err := p.parseRefExpr()
+		if err != nil {
+			return err
+		}
+		step.When = ref
+	case stepFormValue:
+		value, err := p.parseValue()
+		if err != nil {
+			return err
+		}
+		step.Input = value
+	default:
+		return &SyntaxError{
+			Code:    CodeConfigParseError,
+			Message: fmt.Sprintf("step field %q declares unknown value form %q", spec.Name, spec.ValueForm),
+			Line:    p.cur.line, Col: p.cur.col,
+		}
+	}
+	return nil
+}
+
 // parseParallelBlock parses a parallel block as a synthetic step.
 // parallel_block = "parallel" "{" { step_block } "}"
 func (p *parser) parseParallelBlock() (PipelineStepAST, error) {
 	p.nextToken() // consume "parallel"
 	line := p.cur.line
 	if p.cur.typ != tokLBrace {
-		return PipelineStepAST{}, &parseError{
-			Message: fmt.Sprintf("expected '{' after parallel, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return PipelineStepAST{}, p.unexpected("'{' after parallel")
 	}
 	p.nextToken()
 	p.skipNewlines()
@@ -615,10 +737,7 @@ func (p *parser) parseParallelBlock() (PipelineStepAST, error) {
 	var children []PipelineStepAST
 	for p.cur.typ != tokRBrace && p.cur.typ != tokEOF {
 		if p.cur.typ != tokIdent || p.cur.lexeme != "step" {
-			return PipelineStepAST{}, &parseError{
-				Message: fmt.Sprintf("expected 'step' in parallel block, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return PipelineStepAST{}, p.unexpected("'step' in parallel block")
 		}
 		step, err := p.parsePipelineStep()
 		if err != nil {
@@ -629,7 +748,7 @@ func (p *parser) parseParallelBlock() (PipelineStepAST, error) {
 	}
 
 	if p.cur.typ != tokRBrace {
-		return PipelineStepAST{}, &parseError{
+		return PipelineStepAST{}, &SyntaxError{
 			Message: "unterminated parallel block",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -640,22 +759,22 @@ func (p *parser) parseParallelBlock() (PipelineStepAST, error) {
 
 // parseStringArray parses ["a", "b", ...] into []string.
 func (p *parser) parseStringArray() ([]string, error) {
+	if p.cur.typ == tokError {
+		return nil, p.curSyntaxError()
+	}
 	if p.cur.typ != tokLBracket {
-		return nil, &parseError{
-			Message: fmt.Sprintf("expected '[', got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return nil, p.unexpected("'['")
 	}
 	p.nextToken()
 	p.skipNewlines()
 
 	var items []string
 	for p.cur.typ != tokRBracket && p.cur.typ != tokEOF {
+		if p.cur.typ == tokError {
+			return nil, p.curSyntaxError()
+		}
 		if p.cur.typ != tokIdent && p.cur.typ != tokStringLit {
-			return nil, &parseError{
-				Message: fmt.Sprintf("expected identifier or string in array, got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return nil, p.unexpected("identifier or string in array")
 		}
 		var s string
 		if p.cur.typ == tokStringLit {
@@ -672,7 +791,7 @@ func (p *parser) parseStringArray() ([]string, error) {
 	}
 
 	if p.cur.typ != tokRBracket {
-		return nil, &parseError{
+		return nil, &SyntaxError{
 			Message: "unterminated array",
 			Line:    p.cur.line, Col: p.cur.col,
 		}
@@ -685,10 +804,7 @@ func (p *parser) parseStringArray() ([]string, error) {
 // ref_expr = IDENT "." IDENT { "." IDENT }
 func (p *parser) parseRefExpr() (*RefExpr, error) {
 	if p.cur.typ != tokIdent {
-		return nil, &parseError{
-			Message: fmt.Sprintf("expected identifier in ref expression, got %q", p.cur.lexeme),
-			Line:    p.cur.line, Col: p.cur.col,
-		}
+		return nil, p.unexpected("identifier in ref expression")
 	}
 	stepName := p.cur.lexeme
 	line := p.cur.line
@@ -699,17 +815,14 @@ func (p *parser) parseRefExpr() (*RefExpr, error) {
 	for p.cur.typ == tokDot {
 		p.nextToken() // consume "."
 		if p.cur.typ != tokIdent {
-			return nil, &parseError{
-				Message: fmt.Sprintf("expected identifier after '.', got %q", p.cur.lexeme),
-				Line:    p.cur.line, Col: p.cur.col,
-			}
+			return nil, p.unexpected("identifier after '.'")
 		}
 		rawParts = append(rawParts, p.cur.lexeme)
 		p.nextToken()
 	}
 
 	if len(rawParts) < 2 {
-		return nil, &parseError{
+		return nil, &SyntaxError{
 			Message: "ref expression must have at least two parts (step.field)",
 			Line:    line, Col: p.cur.col,
 		}

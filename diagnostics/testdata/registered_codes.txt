@@ -8,7 +8,9 @@ callable_lowering_failed	schema	Callable lowering to schema failed	检查 callab
 class_not_found	runtime	VM could not find a class descriptor	确认 class 已声明并被当前模块加载
 compile_error	schema	Bytecode compilation failed	检查 bytecode 编译错误列表并修正对应源代码
 config_equals_colon	schema	key = value instead of key: value	auto-normalized '=' to ':'
+config_float_overflow	schema	numeric literal out of range for float64	reduce the magnitude of the literal
 config_format_rejected	schema	input format not recognized as config or JSON	use Spore config, JSON, or key=value syntax
+config_int_overflow	schema	integer literal out of range for int64	use a value within int64 range (-9223372036854775808..9223372036854775807), or write it as a float
 config_json_brackets	schema	JSON-style outer braces	auto-stripped outer { } braces
 config_json_quotes	schema	JSON-style quoted map keys	auto-removed quotes from map keys; use bare identifiers
 config_json_trailing_comma	schema	JSON-style trailing comma before } or ]	auto-removed trailing commas

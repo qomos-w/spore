@@ -123,6 +123,8 @@ var (
 // registers it in order. Kept package-local so config stays autonomous.
 var configDiagnosticCodes = []diagnostics.CodeInfo{
 	{Code: "config_parse_error", Category: diagnostics.CategorySchema, Description: "config parse error", Hint: "check syntax near the reported line"},
+	{Code: "config_int_overflow", Category: diagnostics.CategorySchema, Description: "integer literal out of range for int64", Hint: "use a value within int64 range (-9223372036854775808..9223372036854775807), or write it as a float"},
+	{Code: "config_float_overflow", Category: diagnostics.CategorySchema, Description: "numeric literal out of range for float64", Hint: "reduce the magnitude of the literal"},
 	{Code: "config_markdown_block", Category: diagnostics.CategorySchema, Description: "config wrapped in markdown code block", Hint: "auto-stripped markdown fencing"},
 	{Code: "config_json_quotes", Category: diagnostics.CategorySchema, Description: "JSON-style quoted map keys", Hint: "auto-removed quotes from map keys; use bare identifiers"},
 	{Code: "config_json_trailing_comma", Category: diagnostics.CategorySchema, Description: "JSON-style trailing comma before } or ]", Hint: "auto-removed trailing commas"},

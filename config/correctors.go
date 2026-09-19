@@ -51,13 +51,13 @@ func StripJSONQuotes() Corrector {
 			return source, nil
 		}
 		return cleaned, []Diagnostic{{
-			Code:        "config_json_quotes",
-			Category:    "correct",
-			Severity:    "info",
-			Message:     "removed JSON-style quotes from map keys",
-			Hint:        "Spore config uses bare identifiers as map keys, not quoted strings",
-			Actual:      "quoted keys",
-			Expected:    "bare identifiers",
+			Code:     "config_json_quotes",
+			Category: "correct",
+			Severity: "info",
+			Message:  "removed JSON-style quotes from map keys",
+			Hint:     "Spore config uses bare identifiers as map keys, not quoted strings",
+			Actual:   "quoted keys",
+			Expected: "bare identifiers",
 		}}
 	}
 }

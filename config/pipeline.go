@@ -98,7 +98,10 @@ func ParseWithPipeline(source string, pipe *Pipeline) (*Config, []Diagnostic, er
 	cleaned, corDiags := pipe.Correct(source)
 	cfg, err := Parse(cleaned)
 	if err != nil {
-		return nil, corDiags, err
+		// Surface the parse diagnostics alongside the correction diagnostics so
+		// a caller only needs the returned slice to see everything that is
+		// wrong with the input.
+		return nil, append(corDiags, SyntaxDiagnostics(err)...), err
 	}
 
 	valDiags := pipe.Validate(cfg, nil)
@@ -120,7 +123,7 @@ func ParseAndValidate(source string, target any, extra ...Validator) (*Config, [
 	cleaned, corDiags := pipe.Correct(source)
 	cfg, err := Parse(cleaned)
 	if err != nil {
-		return nil, corDiags, err
+		return nil, append(corDiags, SyntaxDiagnostics(err)...), err
 	}
 
 	valDiags := pipe.Validate(cfg, target)

@@ -11,6 +11,8 @@ import (
 // it is the shared fixture for the interop tests below.
 var allConfigDiagnosticCodes = []string{
 	"config_parse_error",
+	"config_int_overflow",
+	"config_float_overflow",
 	"config_markdown_block",
 	"config_json_quotes",
 	"config_json_trailing_comma",
