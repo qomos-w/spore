@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/internal/gen/ts"
 	"github.com/qomos-w/spore/schema"
 )
@@ -68,7 +69,7 @@ func Generate(
 	if strings.TrimSpace(opts.Package) == "" {
 		return nil, fmt.Errorf("goserver: Options.Package is required")
 	}
-	if err := validateCallables(callables); err != nil {
+	if err := common.ValidateCallables(callables, common.ValidateOptions{RejectStreaming: rejectStreaming}); err != nil {
 		return nil, err
 	}
 
@@ -76,7 +77,7 @@ func Generate(
 
 	byNS := map[string][]ts.NamedCallableDesc{}
 	for _, c := range callables {
-		if !shouldEmit(opts, c.Visibility) {
+		if !common.ShouldEmit(opts.Visibilities, c.Visibility) {
 			continue
 		}
 		byNS[c.Namespace] = append(byNS[c.Namespace], c)
@@ -92,7 +93,7 @@ func Generate(
 		}
 
 		var b strings.Builder
-		writeHeader(&b, opts.Header)
+		common.WriteHeader(&b, opts.Header)
 		b.WriteString(body)
 		formatted, err := format.Source([]byte(b.String()))
 		if err != nil {
@@ -103,57 +104,16 @@ func Generate(
 	return files, nil
 }
 
-// validateCallables enforces the same baseline contract as ts-client's
-// validator (non-empty namespace/name, mode-consistent fields, unique
-// (ns, name) pairs) plus an extra goserver-specific rule: streaming
-// callables are NOT yet supported by the server-side dispatcher
-// generator.
-func validateCallables(input []ts.NamedCallableDesc) error {
-	seen := map[string]map[string]struct{}{}
-	for i, c := range input {
-		if c.Namespace == "" {
-			return fmt.Errorf("callable entry[%d]: empty Namespace", i)
-		}
-		if c.Name == "" {
-			return fmt.Errorf("callable entry[%d]: empty Name", i)
-		}
-		switch c.Mode {
-		case schema.CallableModeUnary:
-			if c.ChunkSchemaID != 0 || c.Chunk != nil {
-				return fmt.Errorf("callable %s/%s: unary mode must not carry chunk schema", c.Namespace, c.Name)
-			}
-		case schema.CallableModeStreaming:
-			return fmt.Errorf("callable %s/%s: streaming callables are not yet supported by goserver", c.Namespace, c.Name)
-		default:
-			return fmt.Errorf("callable %s/%s: unknown Mode %q (want unary)", c.Namespace, c.Name, c.Mode)
-		}
-		nsTable, ok := seen[c.Namespace]
-		if !ok {
-			nsTable = map[string]struct{}{}
-			seen[c.Namespace] = nsTable
-		}
-		if _, dup := nsTable[c.Name]; dup {
-			return fmt.Errorf("namespace %q: callable name %q declared twice", c.Namespace, c.Name)
-		}
-		nsTable[c.Name] = struct{}{}
-	}
-	return nil
-}
-
-// shouldEmit reports whether the entry passes the visibility filter.
-// Empty Options.Visibilities defaults to {VisibilityPublic}, matching
-// ts-client.
-func shouldEmit(opts Options, v ts.Visibility) bool {
-	want := opts.Visibilities
-	if len(want) == 0 {
-		want = []ts.Visibility{ts.VisibilityPublic}
-	}
-	for _, w := range want {
-		if w == v {
-			return true
-		}
-	}
-	return false
+// validateCallables / shouldEmit / writeHeader used to be duplicated here.
+// They now live in internal/gen/common; go-server keeps only its
+// target-specific streaming restriction below, which the shared validator
+// applies verbatim.
+//
+// rejectStreaming preserves the MVP restriction documented at the top of this
+// file: the server-side dispatcher generator does not yet target streaming
+// callables (their dispatch shape is a channel/iterator, not a typed struct).
+func rejectStreaming(namespace, name string) error {
+	return fmt.Errorf("callable %s/%s: streaming callables are not yet supported by goserver", namespace, name)
 }
 
 // indexSchemas builds a (namespace, struct name) → ObjectDesc lookup so
@@ -174,18 +134,4 @@ func indexSchemas(schemas []ts.NamedObjectDesc) map[schemaKey]schema.ObjectDesc 
 type schemaKey struct {
 	Namespace string
 	Name      string
-}
-
-// writeHeader prepends the optional comment header to a file buffer.
-// Mirrors ts-client.writeHeader exactly so all spore-gen-* CLIs lay
-// out file headers identically.
-func writeHeader(b *strings.Builder, header string) {
-	if header == "" {
-		return
-	}
-	b.WriteString(header)
-	if !strings.HasSuffix(header, "\n") {
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
 }

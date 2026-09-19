@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/schema"
 )
 
@@ -84,28 +85,18 @@ func renderType(t schema.TypeDesc) (string, error) {
 }
 
 // renderScalar maps Spore scalar names from SYNTAX.md §5.1 to their
-// TypeScript equivalents.
+// TypeScript equivalents, resolving through the shared scalar table in
+// internal/gen/common. Names the table does not know pass through verbatim so
+// hand-written manifests keep working; the empty name (an unnamed scalar)
+// renders as `unknown`.
 func renderScalar(name string) string {
-	switch name {
-	case "bool":
-		return "boolean"
-	case "byte", "short", "ushort", "int", "uint", "long", "ulong",
-		"float", "double", "int8", "int16", "int32", "int64",
-		"uint8", "uint16", "uint32", "uint64", "float32", "float64":
-		return "number"
-	case "string":
-		return "string"
-	case "bytes":
-		return "Uint8Array"
-	case "any":
+	if name == "" {
 		return "unknown"
-	case "null":
-		return "null"
-	case "":
-		return "unknown"
-	default:
-		return name
 	}
+	if out, ok := common.TSScalar(name); ok {
+		return out
+	}
+	return name
 }
 
 // renderContext carries the current namespace plus a name → owner-namespace

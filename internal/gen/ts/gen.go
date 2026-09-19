@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/schema"
 )
 
@@ -33,7 +34,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 	if err := validateSchemas(schemas); err != nil {
 		return nil, err
 	}
-	if err := validateCallables(callables); err != nil {
+	if err := common.ValidateCallables(callables, common.ValidateOptions{}); err != nil {
 		return nil, err
 	}
 
@@ -48,7 +49,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 	nameToNamespace := buildNameToNamespace(schemas)
 
 	for _, e := range schemas {
-		if !opts.shouldEmit(e.Visibility) {
+		if !opts.ShouldEmit(e.Visibility) {
 			if _, ok := requiredByNS[e.Namespace][schemaKey{e.Namespace, e.SchemaID}]; !ok {
 				continue
 			}
@@ -57,7 +58,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 		allNamespaces[e.Namespace] = struct{}{}
 	}
 	for _, c := range callables {
-		if !opts.shouldEmit(c.Visibility) {
+		if !opts.ShouldEmit(c.Visibility) {
 			continue
 		}
 		callableByNS[c.Namespace] = append(callableByNS[c.Namespace], c)
@@ -81,7 +82,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 
 			ctx := newRenderContext(ns, nameToNamespace)
 			var typesBuf strings.Builder
-			writeHeader(&typesBuf, opts.Header)
+			common.WriteHeader(&typesBuf, opts.Header)
 			if needsMedia {
 				typesBuf.WriteString(mediaInterfaceTS)
 				typesBuf.WriteString("\n")
@@ -106,7 +107,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 			sort.SliceStable(ownSchemas, func(i, j int) bool { return ownSchemas[i].Name < ownSchemas[j].Name })
 
 			var regBuf strings.Builder
-			writeHeader(&regBuf, opts.Header)
+			common.WriteHeader(&regBuf, opts.Header)
 			regBuf.WriteString(renderRegistry(ns, ownSchemas))
 			files[ns+"/registry.ts"] = regBuf.String()
 		}
@@ -117,7 +118,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 			sort.SliceStable(callableEntries, func(i, j int) bool { return callableEntries[i].Name < callableEntries[j].Name })
 
 			var callBuf strings.Builder
-			writeHeader(&callBuf, opts.Header)
+			common.WriteHeader(&callBuf, opts.Header)
 			callBuf.WriteString(renderCallables(ns, callableEntries))
 			files[ns+"/callables.ts"] = callBuf.String()
 		}
@@ -125,7 +126,7 @@ func Generate(schemas []NamedObjectDesc, callables []NamedCallableDesc, opts Opt
 		// index.ts always emits when the namespace appears at all. The
 		// barrel re-exports whichever sibling files were produced.
 		var idxBuf strings.Builder
-		writeHeader(&idxBuf, opts.Header)
+		common.WriteHeader(&idxBuf, opts.Header)
 		idxBuf.WriteString(renderIndex(len(typeSchemas) > 0, len(ownSchemas) > 0, len(callableEntries) > 0))
 		files[ns+"/index.ts"] = idxBuf.String()
 	}
@@ -220,7 +221,7 @@ func referencedSchemas(schemasByNS map[string]map[string]NamedObjectDesc, schema
 	requiredByNS := make(map[string]map[schemaKey]struct{})
 
 	for _, c := range callables {
-		if !opts.shouldEmit(c.Visibility) {
+		if !opts.ShouldEmit(c.Visibility) {
 			continue
 		}
 		addReferencedSchema(requiredByNS, schemasByNS, c.Namespace, c.Req, globalByName)
@@ -229,7 +230,7 @@ func referencedSchemas(schemasByNS map[string]map[string]NamedObjectDesc, schema
 	}
 
 	for _, s := range schemas {
-		if !opts.shouldEmit(s.Visibility) {
+		if !opts.ShouldEmit(s.Visibility) {
 			continue
 		}
 		selfRef := schema.TypeDesc{
@@ -328,60 +329,6 @@ func validateSchemas(input []NamedObjectDesc) error {
 		nsTable[e.SchemaID] = e.Name
 	}
 	return nil
-}
-
-// validateCallables rejects callable entries with empty Namespace / Name,
-// duplicate (Namespace, Name) pairs, or stream callables that lack chunk
-// schema. Mode must be one of "unary" / "streaming".
-func validateCallables(input []NamedCallableDesc) error {
-	seen := map[string]map[string]struct{}{}
-	for i, c := range input {
-		if c.Namespace == "" {
-			return fmt.Errorf("callable entry[%d]: empty Namespace", i)
-		}
-		if c.Name == "" {
-			return fmt.Errorf("callable entry[%d]: empty Name", i)
-		}
-		switch string(c.Mode) {
-		case "unary":
-			if c.ChunkSchemaID != 0 || c.Chunk != nil {
-				return fmt.Errorf("callable %s/%s: unary mode must not carry chunk schema", c.Namespace, c.Name)
-			}
-		case "streaming":
-			if c.ChunkSchemaID == 0 {
-				return fmt.Errorf("callable %s/%s: streaming mode requires non-zero ChunkSchemaID", c.Namespace, c.Name)
-			}
-			if c.Chunk == nil {
-				return fmt.Errorf("callable %s/%s: streaming mode requires Chunk TypeDesc", c.Namespace, c.Name)
-			}
-		default:
-			return fmt.Errorf("callable %s/%s: unknown Mode %q (want unary or streaming)", c.Namespace, c.Name, c.Mode)
-		}
-		nsTable, ok := seen[c.Namespace]
-		if !ok {
-			nsTable = map[string]struct{}{}
-			seen[c.Namespace] = nsTable
-		}
-		if _, dup := nsTable[c.Name]; dup {
-			return fmt.Errorf("namespace %q: callable name %q declared twice", c.Namespace, c.Name)
-		}
-		nsTable[c.Name] = struct{}{}
-	}
-	return nil
-}
-
-// writeHeader prepends the optional comment header to a file buffer.
-// A single trailing blank line separates the header from generated content
-// so editors render the boundary clearly.
-func writeHeader(b *strings.Builder, header string) {
-	if header == "" {
-		return
-	}
-	b.WriteString(header)
-	if !strings.HasSuffix(header, "\n") {
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
 }
 
 // mediaInterfaceTS is the canonical TypeScript carrier for the media schema
