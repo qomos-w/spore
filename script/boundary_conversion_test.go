@@ -112,12 +112,12 @@ export fun think(snap: map<string, any>): map<string, any> {
 
 // Repro (barcraft scriptai crash, "map is full (should not happen)"):
 // stringMapToVMMap did not root the outer map handle while converting
-// nested values. The default 64 KiB heap trips its 3/4 GC threshold
+// nested values. An explicit 64 KiB budget trips its 3/4 GC threshold
 // mid-conversion; collect() frees the unrooted map, its memory is reused
 // by later nested allocations, and the next MapSet writes into a foreign
 // object — surfacing as "map is full" or invalid handle panics.
 func TestReproNestedMapArgUnderGCPressure(t *testing.T) {
-	rt, err := script.NewRuntime()
+	rt, err := script.NewRuntimeWith(script.RuntimeOptions{VMHeapBytes: 65536, VMHeapSlots: 256})
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
 	}

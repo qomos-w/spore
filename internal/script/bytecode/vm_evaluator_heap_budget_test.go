@@ -135,8 +135,8 @@ func toStringAny(v any) string {
 }
 
 // TestVMEvaluator_LargeBudgetMaterialisesNestedEnvelope confirms the
-// opt-in knob relaxes the 64 KiB cap: the same payload that panics the
-// default evaluator round-trips successfully with NewVMEvaluatorWith.
+// opt-in knob relaxes small budgets: the same payload that panics the
+// small-budget evaluator round-trips successfully with NewVMEvaluatorWith.
 func TestVMEvaluator_LargeBudgetMaterialisesNestedEnvelope(t *testing.T) {
 	eval := NewVMEvaluatorWith(1<<20, 1024)
 	v, err := anyToVMValue(eval.vm_, buildLargeNestedBatchEnvelope(200))

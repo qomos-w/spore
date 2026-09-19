@@ -317,9 +317,9 @@ export fun drain(): map<string, any> {
 
 // TestE2E_ScriptFullLinkRMWSingleCycle_Large is the same shape as the
 // test above but at N=200, exercising the view/apply batch path against
-// a non-trivial entity count. The 64 KiB VM heap cap (see
-// ecs_binding_bench_test.go) constrains the script-side batch envelope;
-// we use a generous heap here so N=200 is comfortable.
+// a non-trivial entity count. The batch envelope is kept comfortable
+// with an explicit 1 MiB heap (the default is 4 MiB since v0.1.2; this
+// pin predates that and doubles as an explicit-budget exercise).
 func TestE2E_ScriptFullLinkRMWSingleCycle_Large(t *testing.T) {
 	rt, err := script.NewRuntimeWith(script.RuntimeOptions{
 		VMHeapBytes: 1 << 20,

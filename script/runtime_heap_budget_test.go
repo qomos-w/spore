@@ -9,17 +9,18 @@ import (
 
 // --- Runtime VM-memory-budget knob ---
 //
-// The default script.Runtime keeps the historical 64 KiB / 256-slot VM budget.
-// Hosts that materialise deeply-nested values (e.g. ecsbind.World.View's
-// map<string, []map<string, any>> envelope at large N) can opt into a larger
-// budget via RuntimeOptions.VMHeapBytes / VMHeapSlots without touching the
-// default. These tests pin the default behaviour and exercise the opt-in
-// path end-to-end through the public embedding surface.
+// The default script.Runtime budget is DefaultVMHeapBytes (4 MiB since
+// v0.1.2; 64 KiB before). Exceeding the budget after GC panics with
+// "out of memory" — a documented contract, not an accident: budget-
+// sensitive hosts must set RuntimeOptions.VMHeapBytes / VMHeapSlots
+// explicitly and recover at their call boundary. These tests pin the
+// default's numeric value and exercise the explicit-budget path
+// end-to-end through the public embedding surface.
 
 // buildLargeNestedBatchEnvelope mirrors the ecsbind.World.View return shape
 // ("ids": []string, "data": map<string, []map<string, any>>) at large N.
-// N=4000 reliably overflows the default 64 KiB heap and fits comfortably in
-// the 1 MiB opt-in budget.
+// N=4000 reliably overflows an explicit 64 KiB heap and fits comfortably in
+// the 1 MiB budget.
 func buildLargeNestedBatchEnvelope(n int) map[string]any {
 	ids := make([]string, n)
 	entries := make([]map[string]any, n)

@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/qomos-w/spore/config"
 	"github.com/qomos-w/spore/schema"
 )
 
@@ -142,47 +141,8 @@ func TestToFloat64(t *testing.T) {
 	}
 }
 
-func TestPipelineValueToAnyKinds(t *testing.T) {
-	var diags []config.Diagnostic
-	if v := valueToAny(config.Value{Kind: config.ValueInt, IntVal: 7}, &diags); v != int64(7) {
-		t.Fatalf("int: %v", v)
-	}
-	if v := valueToAny(config.Value{Kind: config.ValueFloat, FloatVal: 1.5}, &diags); v != 1.5 {
-		t.Fatalf("float: %v", v)
-	}
-	if v := valueToAny(config.Value{Kind: config.ValueString, StrVal: "s"}, &diags); v != "s" {
-		t.Fatalf("string: %v", v)
-	}
-	if v := valueToAny(config.Value{Kind: config.ValueBool, BoolVal: true}, &diags); v != true {
-		t.Fatalf("bool: %v", v)
-	}
-	if v := valueToAny(config.Value{Kind: config.ValueNull}, &diags); v != nil {
-		t.Fatalf("null: %v", v)
-	}
-	arr := valueToAny(config.Value{Kind: config.ValueArray, Elements: []config.Value{{Kind: config.ValueInt, IntVal: 1}, {Kind: config.ValueString, StrVal: "a"}}}, &diags)
-	if !reflect.DeepEqual(arr, []any{int64(1), "a"}) {
-		t.Fatalf("array: %#v", arr)
-	}
-	m := valueToAny(config.Value{Kind: config.ValueMap, Entries: []config.KeyValue{{Key: "k", Value: config.Value{Kind: config.ValueInt, IntVal: 2}}}}, &diags)
-	if !reflect.DeepEqual(m, map[string]any{"k": int64(2)}) {
-		t.Fatalf("map: %#v", m)
-	}
-	st := valueToAny(config.Value{Kind: config.ValueStruct, TypeName: "P", Fields: []config.KeyValue{{Key: "f", Value: config.Value{Kind: config.ValueInt, IntVal: 3}}}}, &diags)
-	if !reflect.DeepEqual(st, map[string]any{"__struct__": "P", "f": int64(3)}) {
-		t.Fatalf("struct: %#v", st)
-	}
-	ref := valueToAny(config.Value{Kind: config.ValueRef, StrVal: "$a.b"}, &diags)
-	if pr, ok := ref.(PipelineRef); !ok || pr.Expr != "$a.b" {
-		t.Fatalf("ref: %#v", ref)
-	}
-	before := len(diags)
-	if v := valueToAny(config.Value{Kind: config.ValueKind(99)}, &diags); v != nil {
-		t.Fatal("unsupported kind should be nil")
-	}
-	if len(diags) != before+1 {
-		t.Fatal("unsupported kind should append a diagnostic")
-	}
-}
+// TestPipelineValueToAnyKinds moved to config/pipeline_binding_internal_test.go
+// with the valueToAny adapter (binding no longer imports config).
 
 func TestInvocationValueForStageBranches(t *testing.T) {
 	unary, err := schema.DescribeGoFunction("v", func() {})

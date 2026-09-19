@@ -1,4 +1,4 @@
-package binding_test
+package config_test
 
 import (
 	"encoding/json"
@@ -48,7 +48,7 @@ pipeline code_review {
 		t.Fatalf("expected 1 pipeline, got %d", len(cfg.Pipelines))
 	}
 
-	desc, diags := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, diags := config.PipelineDescFromAST(cfg.Pipelines[0])
 	if len(diags) > 0 {
 		for _, d := range diags {
 			if d.Severity == "error" {
@@ -102,7 +102,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	if desc.Steps[0].Invoke != "schema:callable" {
 		t.Errorf("expected schema:callable, got %q", desc.Steps[0].Invoke)
 	}
@@ -131,7 +131,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	input := desc.Steps[0].Input
 	if input["name"] != "hello" {
 		t.Errorf("expected name=hello, got %v", input["name"])
@@ -288,7 +288,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	if desc.Steps[0].When != "s0.facts.ok" {
 		t.Errorf("expected when s0.facts.ok, got %q", desc.Steps[0].When)
 	}
@@ -307,7 +307,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	if desc.Steps[0].Timeout != "10m" {
 		t.Errorf("expected timeout 10m, got %q", desc.Steps[0].Timeout)
 	}

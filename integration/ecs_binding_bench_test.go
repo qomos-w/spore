@@ -296,8 +296,9 @@ func BenchmarkEcsGo_NativeDrainLoop(b *testing.B) {
 // through the VM, so this also exercises the verify-vm-batch-encoding
 // conversion path under load.
 //
-// Note on VM memory: the script VM uses a 64 KiB flat heap per runtime
-// (bytecode/vm_evaluator.go:57, vm.NewVM(65536, 256)). Materialising a
+// Note on VM memory: the script VM uses a flat heap per runtime whose
+// default is 4 MiB (bytecode/vm_evaluator.go, DefaultVMHeapBytes; it was
+// 64 KiB before v0.1.2). Materialising a
 // deeply-nested map<string, []map<string, any>> return shape with N
 // entries can exhaust that budget; the script-side bench therefore
 // (a) uses small N values that fit, and (b) recreates the runtime on
@@ -328,8 +329,8 @@ export fun drain_batch(): int {
 
 // ecsBenchBatchSetup installs the ecsbind.View + ecsbind.Apply methods
 // and loads drain_batch. Used by both the script-side benchmark (which
-// needs a fresh runtime per iteration to stay under the 64 KiB VM
-// memory cap) and the Go-side benchmark (which discards the runtime).
+// needs a fresh runtime per iteration so each measurement sees a clean
+// heap) and the Go-side benchmark (which discards the runtime).
 func ecsBenchBatchSetup(t testing.TB, n int) (*script.Runtime, *runtime.World) {
 	rt, err := script.NewRuntime()
 	if err != nil {
@@ -409,11 +410,9 @@ func ecsBenchBatchSetupInto(t testing.TB, rt *script.Runtime, n int) (*script.Ru
 }
 
 // BenchmarkEcsScript_BatchDrain measures the script-side view/apply
-// path. VM memory ceiling caps the useful N at ~50 entities for the
-// default 64 KiB heap. The script runtime is recreated per iteration so
-// the working set stays under the 64 KiB cap and each measurement sees
-// a clean heap — the script runtime construction cost dominates the
-// bench but is part of the "host-call-driven script" cost model the
+// path. The script runtime is recreated per iteration so each
+// measurement sees a clean heap — the script runtime construction cost
+// dominates the bench but is part of the "host-call-driven script" cost model the
 // design must support. A defer/recover catches VM OOM panics so that
 // slightly-larger N values don't crash the whole benchmark — those
 // iterations are skipped via b.Skip.
@@ -445,8 +444,9 @@ func BenchmarkEcsScript_BatchDrain(b *testing.B) {
 		})
 	}
 	// Smoke run for the opt-in VM memory budget knob: at N=1000 the
-	// nested map<string, []map> envelope would OOM a default 64 KiB VM.
-	// Using script.RuntimeOptions.VMHeapBytes the same drain_batch path
+	// nested map<string, []map> envelope would OOM the historical
+	// 64 KiB default (pre-v0.1.2). Using script.RuntimeOptions.VMHeapBytes
+	// the same drain_batch path
 	// completes successfully, demonstrating that the batch envelope scales
 	// linearly with N once the host opts in.
 	b.Run("N=1000_LargeHeap", func(b *testing.B) {

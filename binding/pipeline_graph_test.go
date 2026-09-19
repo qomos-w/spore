@@ -23,7 +23,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	if len(graph.Nodes) != 2 {
@@ -61,7 +61,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	foundBuildToTest := false
@@ -108,7 +108,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	// Should have parallel node
@@ -162,7 +162,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	found := false
@@ -190,7 +190,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	for _, n := range graph.Nodes {
@@ -227,7 +227,7 @@ pipeline test {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	desc, _ := binding.PipelineDescFromAST(cfg.Pipelines[0])
+	desc, _ := config.PipelineDescFromAST(cfg.Pipelines[0])
 	graph := binding.BuildPipelineGraph(desc)
 
 	// build -> test should only appear once even though both depends_on and input_ref reference build

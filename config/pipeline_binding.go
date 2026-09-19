@@ -1,35 +1,38 @@
-package binding
+package config
 
 import (
 	"fmt"
 
-	"github.com/qomos-w/spore/config"
+	"github.com/qomos-w/spore/binding"
 )
 
 // PipelineDescFromAST converts a config PipelineAST into a binding PipelineDesc.
 // It returns any conversion diagnostics (e.g. invalid values in input maps).
-func PipelineDescFromAST(ast config.PipelineAST) (PipelineDesc, []config.Diagnostic) {
-	var diags []config.Diagnostic
-	steps := make([]PipelineStepDesc, len(ast.Steps))
+//
+// The adapter lives in config (not binding) so the dependency direction stays
+// config→binding: the binding layer must not import the config parsing layer.
+func PipelineDescFromAST(ast PipelineAST) (binding.PipelineDesc, []Diagnostic) {
+	var diags []Diagnostic
+	steps := make([]binding.PipelineStepDesc, len(ast.Steps))
 	for i, stepAST := range ast.Steps {
 		step, stepDiags := pipelineStepFromAST(stepAST)
 		diags = append(diags, stepDiags...)
 		steps[i] = step
 	}
-	return PipelineDesc{Name: ast.Name, Steps: steps}, diags
+	return binding.PipelineDesc{Name: ast.Name, Steps: steps}, diags
 }
 
-func pipelineStepFromAST(step config.PipelineStepAST) (PipelineStepDesc, []config.Diagnostic) {
-	var diags []config.Diagnostic
+func pipelineStepFromAST(step PipelineStepAST) (binding.PipelineStepDesc, []Diagnostic) {
+	var diags []Diagnostic
 
 	input := make(map[string]any)
-	if step.Input.Kind == config.ValueMap {
+	if step.Input.Kind == ValueMap {
 		for _, kv := range step.Input.Entries {
 			input[kv.Key] = valueToAny(kv.Value, &diags)
 		}
-	} else if step.Input.Kind != config.ValueNull && step.Input.Kind != 0 {
+	} else if step.Input.Kind != ValueNull && step.Input.Kind != 0 {
 		// Input is not a map — warn but still proceed.
-		diags = append(diags, config.Diagnostic{
+		diags = append(diags, Diagnostic{
 			Code:     "pipeline_input_mismatch",
 			Category: "validate",
 			Severity: "warning",
@@ -44,7 +47,7 @@ func pipelineStepFromAST(step config.PipelineStepAST) (PipelineStepDesc, []confi
 		whenStr = step.When.Raw
 	}
 
-	desc := PipelineStepDesc{
+	desc := binding.PipelineStepDesc{
 		Name:      step.Name,
 		Invoke:    step.Invoke,
 		Input:     input,
@@ -54,7 +57,7 @@ func pipelineStepFromAST(step config.PipelineStepAST) (PipelineStepDesc, []confi
 	}
 
 	if len(step.Parallel) > 0 {
-		desc.Parallel = make([]PipelineStepDesc, len(step.Parallel))
+		desc.Parallel = make([]binding.PipelineStepDesc, len(step.Parallel))
 		for i, child := range step.Parallel {
 			childDesc, childDiags := pipelineStepFromAST(child)
 			diags = append(diags, childDiags...)
@@ -65,41 +68,41 @@ func pipelineStepFromAST(step config.PipelineStepAST) (PipelineStepDesc, []confi
 	return desc, diags
 }
 
-func valueToAny(v config.Value, diags *[]config.Diagnostic) any {
+func valueToAny(v Value, diags *[]Diagnostic) any {
 	switch v.Kind {
-	case config.ValueInt:
+	case ValueInt:
 		return v.IntVal
-	case config.ValueFloat:
+	case ValueFloat:
 		return v.FloatVal
-	case config.ValueString:
+	case ValueString:
 		return v.StrVal
-	case config.ValueBool:
+	case ValueBool:
 		return v.BoolVal
-	case config.ValueNull:
+	case ValueNull:
 		return nil
-	case config.ValueArray:
+	case ValueArray:
 		arr := make([]any, len(v.Elements))
 		for i, e := range v.Elements {
 			arr[i] = valueToAny(e, diags)
 		}
 		return arr
-	case config.ValueMap:
+	case ValueMap:
 		m := make(map[string]any, len(v.Entries))
 		for _, kv := range v.Entries {
 			m[kv.Key] = valueToAny(kv.Value, diags)
 		}
 		return m
-	case config.ValueStruct:
+	case ValueStruct:
 		m := make(map[string]any, len(v.Fields)+1)
 		m["__struct__"] = v.TypeName
 		for _, kv := range v.Fields {
 			m[kv.Key] = valueToAny(kv.Value, diags)
 		}
 		return m
-	case config.ValueRef:
-		return PipelineRef{Expr: v.StrVal}
+	case ValueRef:
+		return binding.PipelineRef{Expr: v.StrVal}
 	default:
-		*diags = append(*diags, config.Diagnostic{
+		*diags = append(*diags, Diagnostic{
 			Code:     "pipeline_input_mismatch",
 			Category: "validate",
 			Severity: "warning",
