@@ -16,11 +16,27 @@ type InvocationStage string
 // Contract: public semantic contract — invocation result classification.
 type InvocationResultKind string
 
+// ExecutionState carries the per-step counters an ExecutionBudget is checked
+// against. Duration is intentionally absent: the duration budget travels
+// through the invocation context (see CheckExecution), not through state.
 type ExecutionState struct {
 	Instructions uint64
 	HostCalls    uint32
 }
 
+// CheckExecution enforces the per-step limits of an ExecutionBudget. It
+// enforces MaxInstructions and MaxHostCalls against state, and reports the
+// context error that carries the MaxDuration budget:
+//
+//   - MaxDuration is not tracked in state. The invocation path derives the
+//     context from the duration budget (binding.ExecutableRegistry.Invoke and
+//     script.CallContext.context apply identical deadline semantics), and this
+//     function passes ctx.Err() straight through once that deadline elapses.
+//     A nil error means no declared limit has been reached.
+//   - MaxOutputBytes is not enforced here; the host enforces it after encoding.
+//
+// The other previously reserved limits (MaxMemory, MaxRecursion) were removed
+// because nothing enforced them.
 func CheckExecution(ctx context.Context, budget ExecutionBudget, state *ExecutionState) error {
 	if ctx != nil {
 		select {
