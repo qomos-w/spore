@@ -273,7 +273,7 @@ func (f *HostFleet) Spawn(x float64) (string, error) {
 // script Runtime under the Unit interface, then returns the live
 // *UnitHost. The script runtime's HostInterfaceHandleForValue converts
 // the returned Go target into a Unit proxy object the script can call
-// methods on (internal/script/bytecode/vm_evaluator.go:anyToVMValueAtPath).
+// methods on (internal/script/bytecode/value_codec.go:anyToVMValueAtPath).
 //
 // This is the "factory / per-instance proxy" idiom: scripts see the
 // proxy, not the Go pointer. The proxy methods (Move / Hp / Dispose on
@@ -433,7 +433,7 @@ func (f *HostFleet) LookUp(id string) (*UnitHost, bool) {
 //   - spawn returns string (id).
 //   - spawn_proxy returns the live Unit proxy; the script runtime
 //     converts the returned *UnitHost Go value via HostInterfaceHandleForValue
-//     (internal/script/bytecode/vm_evaluator.go:745-748).
+//     (internal/script/bytecode/value_codec.go:anyToVMValueAtPath).
 //   - move / destroy are void on the script side. The Go methods return
 //     error so stale handles surface as ErrStaleEntity, which the
 //     script runtime surfaces as a panic (script/runtime.go:1315).
