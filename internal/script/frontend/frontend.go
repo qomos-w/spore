@@ -760,9 +760,17 @@ type sourceDiagnosticCode string
 const diagNoEvaluator sourceDiagnosticCode = "no_evaluator"
 const diagParseError sourceDiagnosticCode = "parse_error"
 
+// sourceDiagnosticCodes is this package's diagnostic-code table; init()
+// registers it in order. Kept package-local so frontend stays autonomous.
+var sourceDiagnosticCodes = []diagnostics.CodeInfo{
+	{Code: string(diagNoEvaluator), Category: diagnostics.CategoryHost, Description: "Source-defined callable has no evaluator", Hint: "为该 callable 提供 evaluator，或改为绑定到可执行实现"},
+	{Code: string(diagParseError), Category: diagnostics.CategoryLoad, Description: "Frontend parser rejected the source", Hint: "检查报错位置附近的语法，并按 expected/actual 修正 token"},
+}
+
 func init() {
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: string(diagNoEvaluator), Category: diagnostics.CategoryHost, Description: "Source-defined callable has no evaluator", Hint: "为该 callable 提供 evaluator，或改为绑定到可执行实现"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: string(diagParseError), Category: diagnostics.CategoryLoad, Description: "Frontend parser rejected the source", Hint: "检查报错位置附近的语法，并按 expected/actual 修正 token"})
+	for _, info := range sourceDiagnosticCodes {
+		diagnostics.RegisterCode(info)
+	}
 }
 
 type sourceEvalError struct {

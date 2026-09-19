@@ -49,13 +49,21 @@ type MutationResult struct {
 
 const CodeBindingError = "binding_error"
 
-func init() {
-	diagnostics.RegisterCode(diagnostics.CodeInfo{
+// bindingDiagnosticCodes is this package's diagnostic-code table; init()
+// registers it in order. Kept package-local so binding stays autonomous.
+var bindingDiagnosticCodes = []diagnostics.CodeInfo{
+	{
 		Code:        CodeBindingError,
 		Category:    diagnostics.CategoryContract,
 		Description: "Binding target does not match its schema descriptor",
 		Hint:        "检查绑定目标对象的类型是否与 schema 描述符匹配",
-	})
+	},
+}
+
+func init() {
+	for _, info := range bindingDiagnosticCodes {
+		diagnostics.RegisterCode(info)
+	}
 }
 
 // ObjectBinding represents the binding between a schema descriptor and a
