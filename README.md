@@ -127,6 +127,12 @@ generators turn schema manifests into typed code for both sides:
 | `spore-gen-ts` | TypeScript types from schema manifests |
 | `spore-gen-ts-client` | TypeScript client classes |
 
+For in-process generation (no subprocess), the public `gen/render` package
+re-exports all four generators behind one entry point each — `Generate`,
+`GenerateTSClient`, `GenerateGoServer`, `RenderGoTypes`/`RenderGoTypesRegistry`.
+The CLIs above are thin wrappers over that same façade, so the four generators
+present one symmetric public surface to embedders.
+
 ## Project Layout
 
 | Path | Contents |
@@ -137,6 +143,7 @@ generators turn schema manifests into typed code for both sides:
 | `transport/` | Schema-aware JSON codec and wire envelope |
 | `std/` | Standard library modules (`math`, `strings`, `json`, `time`, ...) |
 | `ts/` | TypeScript runtime mirror |
+| `gen/render/` | Public code-generation façade (four generators) |
 | `benchmarks/` | Comparative benchmarks against goja / lua / tengo |
 | `internal/script/` | Compiler, VM, and frontend (internal; not imported by hosts) |
 

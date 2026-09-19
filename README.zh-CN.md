@@ -116,6 +116,8 @@ Schema 是跨语言契约的唯一事实来源，`cmd/` 生成器把 schema 清�
 | `spore-gen-ts` | 从 schema 清单生成 TypeScript 类型 |
 | `spore-gen-ts-client` | 从 schema 清单生成 TypeScript client 类 |
 
+进程内生成（不走子进程）走公开包 `gen/render`：它把四个生成器各以一个入口再导出——`Generate`、`GenerateTSClient`、`GenerateGoServer`、`RenderGoTypes`/`RenderGoTypesRegistry`。上面的 CLI 就是这层门面的薄封装，四个生成器因此对嵌入方呈现对称的公开面。
+
 ## 目录结构
 
 | 路径 | 内容 |
@@ -126,6 +128,7 @@ Schema 是跨语言契约的唯一事实来源，`cmd/` 生成器把 schema 清�
 | `transport/` | schema 感知的 JSON codec 与线格式 envelope |
 | `std/` | 标准库模块（`math`、`strings`、`json`、`time` 等） |
 | `ts/` | TypeScript 运行时镜像 |
+| `gen/render/` | 公开代码生成门面（四个生成器） |
 | `benchmarks/` | 与 goja / lua / tengo 的对比基准 |
 | `internal/script/` | 编译器、VM、前端（internal，宿主不导入） |
 

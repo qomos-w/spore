@@ -22,6 +22,11 @@
 // callable's req/chunk/final type also has a matching schema entry in the
 // same namespace. Cross-namespace type imports are out of scope for the
 // MVP — flag this when planning your manifest.
+//
+// Generation runs through the public gen/render façade — the same entry point
+// external embedders use — so the four spore-gen-* CLIs present one symmetric
+// public code-generation surface. Only CLI plumbing (flag registration,
+// manifest decoding, file IO) comes from internal packages.
 package main
 
 import (
@@ -29,10 +34,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/qomos-w/spore/gen/render"
 	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/internal/gen/manifest"
-	"github.com/qomos-w/spore/internal/gen/ts"
-	tsclient "github.com/qomos-w/spore/internal/gen/ts-client"
 )
 
 func main() {
@@ -64,7 +68,7 @@ func main() {
 		fail(fmt.Errorf("decode manifest: %w", err))
 	}
 
-	files, err := tsclient.Generate(callables, ts.Options{
+	files, err := render.GenerateTSClient(callables, render.Options{
 		Visibilities: visibilities,
 		Header:       flags.Header,
 	})
