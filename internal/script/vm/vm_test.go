@@ -126,28 +126,6 @@ func TestVMStructOperations(t *testing.T) {
 	}
 }
 
-func TestVMStackOperations(t *testing.T) {
-	v := newVM(4096, 256)
-
-	v.push(encodeInt(1))
-	v.push(encodeInt(2))
-	v.push(encodeInt(3))
-
-	if v.sp != 3 {
-		t.Errorf("sp = %d, want 3", v.sp)
-	}
-
-	top := v.pop()
-	if top.decodeInt() != 3 {
-		t.Errorf("pop = %d, want 3", top.decodeInt())
-	}
-
-	peek := v.peek()
-	if peek.decodeInt() != 2 {
-		t.Errorf("peek = %d, want 2", peek.decodeInt())
-	}
-}
-
 func TestVMClassMethodDispatchDoesNotRegisterFunction(t *testing.T) {
 	v := NewVM(4096, 256)
 

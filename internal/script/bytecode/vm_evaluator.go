@@ -92,7 +92,7 @@ type streamSession struct {
 }
 
 // NewVMEvaluator creates a new VM-backed evaluator with the default 4 MiB
-// heap and 256 call-stack slots. It is equivalent to
+// heap and a 256-slot operand-stack reserve. It is equivalent to
 // NewVMEvaluatorWith(0, 0) — zero/negative values mean "use the default".
 func NewVMEvaluator() *VMEvaluator {
 	return NewVMEvaluatorWith(0, 0)
@@ -101,7 +101,8 @@ func NewVMEvaluator() *VMEvaluator {
 // NewVMEvaluatorWith creates a new VM-backed evaluator with a custom VM
 // memory budget. A heapBytes of 0 (or negative) means
 // DefaultVMHeapBytes (4 MiB); a slots of 0 (or negative) means
-// DefaultVMHeapSlots (256). Exceeding the budget after GC panics
+// DefaultVMHeapSlots (256). slots seeds the interpreter's single execution
+// stack (which grows on demand). Exceeding the heap budget after GC panics
 // ("out of memory") — see DefaultVMHeapBytes for the contract.
 func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 	heapBytes, slots = resolveVMBudget(heapBytes, slots)
@@ -123,7 +124,7 @@ func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 }
 
 // VMHeapBudget reports the configured VM memory budget for this evaluator
-// (heap bytes, call-stack slots). Zero means the evaluator was built with
+// (heap bytes, operand-stack slots). Zero means the evaluator was built with
 // the default budget — useful for diagnostics and tests.
 func (e *VMEvaluator) VMHeapBudget() (int, int) {
 	if e == nil {

@@ -39,7 +39,7 @@ func TestGC_ShouldCollectAboveThreshold(t *testing.T) {
 	}
 }
 
-func TestGC_MarkStackValue(t *testing.T) {
+func TestGC_MarkRootedValue(t *testing.T) {
 	v := newVM(4096, 256)
 
 	sid, _ := v.structRegistry.register("S", []fieldDef{
@@ -51,7 +51,8 @@ func TestGC_MarkStackValue(t *testing.T) {
 	if !encoded.isPointer() {
 		t.Fatalf("encoded handle should be pointer, raw=%#x tag=%d", uint64(encoded), encoded.tag())
 	}
-	v.push(encoded)
+	release := v.addTemporaryRoot(encoded)
+	defer release()
 
 	g := v.gc
 	g.mark()
@@ -61,7 +62,7 @@ func TestGC_MarkStackValue(t *testing.T) {
 		t.Fatalf("handle %d maps to index %d, out of marked range", h, idx)
 	}
 	if !g.marked[idx] {
-		t.Error("struct reachable from stack should be marked")
+		t.Error("struct reachable from a root should be marked")
 	}
 }
 
@@ -72,7 +73,7 @@ func TestGC_SweepUnmarkedStruct(t *testing.T) {
 		{name: "a", typeID: typeInt},
 	})
 
-	// Allocate a struct but don't push it — unreachable.
+	// Allocate a struct but don't root it — unreachable.
 	h := v.newStruct(sid, []value{encodeInt(10)})
 
 	v.gc.collect()
@@ -95,7 +96,8 @@ func TestGC_SweepKeepsReachableStruct(t *testing.T) {
 	})
 
 	h := v.newStruct(sid, []value{encodeInt(55)})
-	v.push(encodeHandle(h))
+	release := v.addTemporaryRoot(encodeHandle(h))
+	defer release()
 
 	v.gc.collect()
 
@@ -157,7 +159,8 @@ func TestGC_MarkArrayReachable(t *testing.T) {
 	arr := v.newArray(typeInt, 4)
 	v.setArrayElement(arr, 0, encodeInt(10))
 	v.setArrayElement(arr, 1, encodeInt(20))
-	v.push(encodeHandle(arr))
+	release := v.addTemporaryRoot(encodeHandle(arr))
+	defer release()
 
 	v.gc.collect()
 
@@ -174,7 +177,7 @@ func TestGC_SweepUnreachableArray(t *testing.T) {
 	v := newVM(4096, 256)
 
 	arr := v.newArray(typeInt, 4)
-	// Don't push — unreachable.
+	// Don't root — unreachable.
 
 	v.gc.collect()
 
@@ -192,7 +195,8 @@ func TestGC_MarkMapReachable(t *testing.T) {
 	m := v.newMap(typeInt, typeInt, 0)
 	v.mapSet(m, encodeInt(1), encodeInt(100))
 	v.mapSet(m, encodeInt(2), encodeInt(200))
-	v.push(encodeHandle(m))
+	release := v.addTemporaryRoot(encodeHandle(m))
+	defer release()
 
 	v.gc.collect()
 
@@ -211,7 +215,7 @@ func TestGC_SweepUnreachableMap(t *testing.T) {
 
 	m := v.newMap(typeInt, typeInt, 0)
 	v.mapSet(m, encodeInt(1), encodeInt(100))
-	// Don't push — unreachable.
+	// Don't root — unreachable.
 
 	v.gc.collect()
 
@@ -232,7 +236,8 @@ func TestGC_MarkObjectReachable(t *testing.T) {
 
 	obj := v.createObject(1)
 	v.setField(obj, "x", encodeInt(77))
-	v.push(encodeHandle(obj))
+	release := v.addTemporaryRoot(encodeHandle(obj))
+	defer release()
 
 	v.gc.collect()
 
@@ -250,7 +255,7 @@ func TestGC_SweepUnreachableObject(t *testing.T) {
 	v.classRegistry.register(class)
 
 	obj := v.createObject(1)
-	// Don't push — unreachable.
+	// Don't root — unreachable.
 
 	v.gc.collect()
 
@@ -260,7 +265,7 @@ func TestGC_SweepUnreachableObject(t *testing.T) {
 	}
 }
 
-func TestGC_RootProviderMarksValueOutsideVMStack(t *testing.T) {
+func TestGC_RootProviderKeepsValueAlive(t *testing.T) {
 	v := newVM(4096, 256)
 
 	arr := v.newArray(typeInt, 1)
@@ -273,7 +278,7 @@ func TestGC_RootProviderMarksValueOutsideVMStack(t *testing.T) {
 	v.gc.collect()
 
 	if idx := v.getMemoryIndex(arr); idx < 0 {
-		t.Fatal("root provider should keep array alive outside vm.stack")
+		t.Fatal("root provider should keep array alive outside VM memory")
 	}
 	if got := v.getArrayElement(arr, 0).decodeInt(); got != 99 {
 		t.Fatalf("array element = %d, want 99 after GC", got)
@@ -340,7 +345,8 @@ func TestGC_ArrayReachableKeepsInnerStruct(t *testing.T) {
 
 	arr := v.newArray(typeAny, 1)
 	v.setArrayElement(arr, 0, encodeHandle(inner))
-	v.push(encodeHandle(arr))
+	release := v.addTemporaryRoot(encodeHandle(arr))
+	defer release()
 
 	// Mark the array. The inner struct is referenced by the array element.
 	g := v.gc
@@ -369,7 +375,8 @@ func TestGC_ObjectInMapValue(t *testing.T) {
 
 	m := v.newMap(typeInt, typeAny, 0)
 	v.mapSet(m, encodeInt(1), encodeHandle(obj))
-	v.push(encodeHandle(m))
+	release := v.addTemporaryRoot(encodeHandle(m))
+	defer release()
 
 	// Mark the map. The object should be reachable via map value.
 	g := v.gc
@@ -387,11 +394,12 @@ func TestGC_HeapLongKeepsReachable(t *testing.T) {
 	v := newVM(4096, 256)
 
 	lv := v.encodeLong(maxInlineLong + 1)
-	v.push(lv)
+	release := v.addTemporaryRoot(lv)
+	defer release()
 
 	v.gc.collect()
 
-	result := v.decodeLong(v.pop())
+	result := v.decodeLong(lv)
 	if result != maxInlineLong+1 {
 		t.Errorf("long value = %d, want %d after GC", result, maxInlineLong+1)
 	}
@@ -399,7 +407,7 @@ func TestGC_HeapLongKeepsReachable(t *testing.T) {
 
 // --- GC edge cases ---
 
-func TestGC_EmptyStackCollectsAll(t *testing.T) {
+func TestGC_EmptyRootsCollectsAll(t *testing.T) {
 	v := newVM(4096, 256)
 
 	sid, _ := v.structRegistry.register("S", []fieldDef{
@@ -413,7 +421,7 @@ func TestGC_EmptyStackCollectsAll(t *testing.T) {
 	v.gc.collect()
 
 	if v.gc.freed == 0 {
-		t.Error("expected freed > 0 when collecting with empty stack")
+		t.Error("expected freed > 0 when collecting with no roots")
 	}
 	if len(v.freeList) == 0 {
 		t.Error("expected free list to contain collected slots")
@@ -454,9 +462,10 @@ func TestGC_TriggeredByAllocation(t *testing.T) {
 		{name: "a", typeID: typeInt},
 	})
 
-	// Push a reachable struct.
+	// Root a reachable struct.
 	h := v.newStruct(sid, []value{encodeInt(42)})
-	v.push(encodeHandle(h))
+	release := v.addTemporaryRoot(encodeHandle(h))
+	defer release()
 
 	collectionsBefore := v.gc.collections
 
@@ -477,7 +486,7 @@ func TestGC_TriggeredByAllocation(t *testing.T) {
 	}
 }
 
-func TestGC_MarkOnlyScansStackRange(t *testing.T) {
+func TestGC_MarkOnlyScansLiveRoots(t *testing.T) {
 	v := newVM(4096, 256)
 
 	sid, _ := v.structRegistry.register("S", []fieldDef{
@@ -487,23 +496,22 @@ func TestGC_MarkOnlyScansStackRange(t *testing.T) {
 	h1 := v.newStruct(sid, []value{encodeInt(1)})
 	h2 := v.newStruct(sid, []value{encodeInt(2)})
 
-	// Push h1, then push and pop h2.
-	v.push(encodeHandle(h1))
-	v.push(encodeHandle(h2))
-	v.pop() // h2 is now outside sp
+	// Root h1 only; h2 is left unreachable.
+	release := v.addTemporaryRoot(encodeHandle(h1))
+	defer release()
 
 	g := v.gc
 	g.mark()
 
-	// h1 should be marked (still on stack).
+	// h1 should be marked (live root).
 	idx1 := v.getMemoryIndex(h1)
 	if !g.marked[idx1] {
-		t.Error("h1 should be marked (on stack)")
+		t.Error("h1 should be marked (live root)")
 	}
 
-	// h2 should NOT be marked (popped, outside sp).
+	// h2 should NOT be marked (no root references it).
 	idx2 := v.getMemoryIndex(h2)
 	if g.marked[idx2] {
-		t.Error("h2 should not be marked (popped, outside sp)")
+		t.Error("h2 should not be marked (unrooted)")
 	}
 }

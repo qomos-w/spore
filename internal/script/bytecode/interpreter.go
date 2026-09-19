@@ -9,6 +9,11 @@ import (
 
 const maxCallDepth = 1000
 
+// defaultOperandStackCapacity seeds the interpreter's execution stack when the
+// bound VM does not configure one (see VM.OperandStackCapacity). The stack
+// still grows on demand, so this is only the initial reserve.
+const defaultOperandStackCapacity = 1024
+
 type nativeValueResolver interface {
 	ResolveImportedNativeValue(slot int) (vm.Value, error)
 }
@@ -85,11 +90,17 @@ type Interpreter struct {
 	deferStack     []deferEntry      // registered defer bodies (execution order: innermost first)
 }
 
-// newInterpreter creates an interpreter bound to the given VM.
+// newInterpreter creates an interpreter bound to the given VM. The interpreter
+// is the sole owner of the execution (operand) stack; its initial capacity
+// comes from the VM's configured stack capacity.
 func newInterpreter(v *vm.VM) *Interpreter {
+	stackCap := v.OperandStackCapacity()
+	if stackCap <= 0 {
+		stackCap = defaultOperandStackCapacity
+	}
 	interp := &Interpreter{
 		vm_:        v,
-		stack:      make([]vm.Value, 1024),
+		stack:      make([]vm.Value, stackCap),
 		locals:     make([]vm.Value, 0, 256),
 		globals:    make([]vm.Value, 256),
 		callFrames: make([]callFrame, 0, 64),

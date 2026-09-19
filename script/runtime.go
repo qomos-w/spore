@@ -116,11 +116,13 @@ type RuntimeOptions struct {
 	// their invocation boundary. It is preserved across Clone and Reset so
 	// a runtime rebuilt mid-session keeps its budget.
 	VMHeapBytes int
-	// VMHeapSlots overrides the VM call-stack slot count used by the
-	// underlying bytecode evaluator. A value of 0 (the default) means the
-	// historical 256-slot budget; positive values raise the cap. The
-	// setting is purely opt-in and behaves like VMHeapBytes with respect
-	// to defaults and persistence across Clone/Reset.
+	// VMHeapSlots overrides the operand-stack capacity used by the
+	// underlying bytecode evaluator's single execution stack. A value of
+	// 0 (the default) means the historical 256-slot reserve; positive
+	// values raise it. The interpreter stack grows on demand, so this is
+	// the initial reserve, not a hard cap. The setting is purely opt-in
+	// and behaves like VMHeapBytes with respect to defaults and
+	// persistence across Clone/Reset.
 	VMHeapSlots int
 }
 

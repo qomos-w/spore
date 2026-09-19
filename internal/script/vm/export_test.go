@@ -184,11 +184,10 @@ func TestExportedDecodeHandle(t *testing.T) {
 	}
 }
 
-func TestExportedPushAndPop(t *testing.T) {
-	v := NewVM(1024, 256)
-	v.Push(EncodeInt(42))
-	if v.Pop() != EncodeInt(42) {
-		t.Error("expected Pop to return pushed value")
+func TestOperandStackCapacityReflectsNewVM(t *testing.T) {
+	v := NewVM(1024, 384)
+	if got := v.OperandStackCapacity(); got != 384 {
+		t.Errorf("OperandStackCapacity() = %d, want 384", got)
 	}
 }
 

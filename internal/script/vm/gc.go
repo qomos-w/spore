@@ -33,7 +33,9 @@ func (g *gc) collect() {
 	g.collections++
 }
 
-// mark scans the VM stack and marks all reachable objects.
+// mark scans all registered GC roots and marks reachable objects. Roots come
+// from root providers (the interpreter's operand stack/locals, session state,
+// host-interface tables, ...); the VM itself owns no operand stack.
 func (g *gc) mark() {
 	if len(g.marked) < len(g.vm.memory) {
 		g.marked = make([]bool, len(g.vm.memory))
@@ -43,9 +45,6 @@ func (g *gc) mark() {
 		}
 	}
 
-	for i := 0; i < g.vm.sp; i++ {
-		g.markValue(value(g.vm.stack[i]))
-	}
 	for _, id := range g.vm.rootProviderOrder {
 		provider := g.vm.rootProviders[id]
 		if provider == nil {
