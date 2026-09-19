@@ -7,8 +7,8 @@ import (
 // Diagnostic is a structured configuration diagnostic for LLM/tooling consumption.
 type Diagnostic struct {
 	Code        string
-	Category    string   // "correct" or "validate"
-	Severity    string   // "error", "warning", "info"
+	Category    string // "correct" or "validate"
+	Severity    string // "error", "warning", "info"
 	Message     string
 	Hint        string
 	Line        int
@@ -29,6 +29,95 @@ func (d Diagnostic) String() string {
 	}
 	return s
 }
+
+// Error implements error so a Diagnostic value can be handed directly to
+// diagnostics.FromError (and any other error-based API). It renders the
+// human-facing message only; code, category, severity and hint travel as
+// structured fields rather than being re-encoded into the message.
+func (d Diagnostic) Error() string {
+	if d.Message != "" {
+		return d.Message
+	}
+	return d.String()
+}
+
+// The methods below satisfy the (unexported) interfaces that
+// diagnostics.FromError probes, so a config diagnostic is recognized and
+// classified by the shared diagnostics envelope instead of falling through
+// as an opaque error. They were pinned against diagnostics/from_error.go:
+// coder, categorizer, spanner, pather, expecteder, actualer and hinter.
+//
+// These are additive: the existing fields keep their meaning and the
+// diagnostics.Descriptor has no severity dimension, so config severity stays
+// on the source Diagnostic (see DiagnosticSeverity).
+
+// DiagnosticCode returns the config diagnostic code, surfaced by FromError.
+func (d Diagnostic) DiagnosticCode() string { return d.Code }
+
+// DiagnosticCategory classifies the diagnostic in the diagnostics package's
+// category space. Config diagnostics are registered in the schema layer, and
+// the code registry is authoritative; CategorySchema is the documented
+// fallback for an unregistered or empty code.
+func (d Diagnostic) DiagnosticCategory() diagnostics.Category {
+	if info, ok := diagnostics.LookupCode(d.Code); ok && info.Category != "" {
+		return info.Category
+	}
+	return diagnostics.CategorySchema
+}
+
+// DiagnosticSeverity reports the config-side severity ("error", "warning",
+// "info"). diagnostics.Descriptor carries no severity dimension, so severity
+// is preserved on the originating Diagnostic rather than folded into the
+// envelope; this accessor makes it reachable from callers that hold the
+// error returned to FromError.
+func (d Diagnostic) DiagnosticSeverity() string { return d.Severity }
+
+// DiagnosticSpan maps the diagnostic's Line/Col onto a diagnostics source
+// span. A zero position yields the zero span (omitted from the envelope).
+func (d Diagnostic) DiagnosticSpan() diagnostics.Span {
+	if d.Line == 0 && d.Col == 0 {
+		return diagnostics.Span{}
+	}
+	start := diagnostics.Position{Line: d.Line, Column: d.Col}
+	return diagnostics.Span{Start: start, End: start}
+}
+
+// DiagnosticPath reports the provenance path for config-originated
+// diagnostics, mirroring the path convention used by other layers
+// (e.g. binding/invocation/stage).
+func (d Diagnostic) DiagnosticPath() string { return "config" }
+
+// DiagnosticExpected exposes the expected type/value for guided repair.
+func (d Diagnostic) DiagnosticExpected() string { return d.Expected }
+
+// DiagnosticActual exposes the actual type/value for guided repair.
+func (d Diagnostic) DiagnosticActual() string { return d.Actual }
+
+// DiagnosticHint exposes the repair hint, falling back to the hint recorded
+// in the code registry so FromError can surface guidance even when the field
+// is unset.
+func (d Diagnostic) DiagnosticHint() string {
+	if d.Hint != "" {
+		return d.Hint
+	}
+	if info, ok := diagnostics.LookupCode(d.Code); ok {
+		return info.Hint
+	}
+	return ""
+}
+
+// Compile-time guarantees that Diagnostic interoperates with the diagnostics
+// package: it is an error and it satisfies every shape FromError probes.
+var (
+	_ error                                                  = Diagnostic{}
+	_ interface{ DiagnosticCode() string }                   = Diagnostic{}
+	_ interface{ DiagnosticCategory() diagnostics.Category } = Diagnostic{}
+	_ interface{ DiagnosticSpan() diagnostics.Span }         = Diagnostic{}
+	_ interface{ DiagnosticPath() string }                   = Diagnostic{}
+	_ interface{ DiagnosticExpected() string }               = Diagnostic{}
+	_ interface{ DiagnosticActual() string }                 = Diagnostic{}
+	_ interface{ DiagnosticHint() string }                   = Diagnostic{}
+)
 
 func init() {
 	cat := diagnostics.CategorySchema

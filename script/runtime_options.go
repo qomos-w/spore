@@ -7,7 +7,8 @@ import (
 )
 
 // ExecutionBudget limits one script invocation. A zero value leaves a limit
-// disabled; MaxMemory is reserved for future VM accounting.
+// disabled; see invoke.ExecutionBudget for the enforcement status of each
+// field.
 type ExecutionBudget = binding.ExecutionBudget
 
 // CallContext describes the host cancellation and execution limits for one call.

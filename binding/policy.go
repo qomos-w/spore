@@ -64,8 +64,16 @@ func authorizedContext(inv AuthorizedInvocation, policy CapabilityPolicy) (conte
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if policy.Timeout > 0 {
-		child, cancel := context.WithTimeout(ctx, policy.Timeout)
+	// The capability policy owns the primary timeout, but when it does not
+	// declare one the invocation's own duration budget still applies (same
+	// "earlier caller deadline wins, otherwise WithTimeout" semantics as the
+	// other binding/script invocation paths).
+	timeout := policy.Timeout
+	if timeout <= 0 {
+		timeout = inv.Budget.MaxDuration
+	}
+	if timeout > 0 {
+		child, cancel := context.WithTimeout(ctx, timeout)
 		return child, cancel, nil
 	}
 	return ctx, func() {}, nil
