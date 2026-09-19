@@ -61,12 +61,27 @@ func bittz(x uint64) int {
 	return n
 }
 
-// compID returns the dense component ID for schemaName, interning it on
-// first use. Component IDs are per-World and assigned in first-write order.
-func (w *World) compID(name string) uint32 {
+// compID returns the dense component ID for schemaName, interning it on first
+// use. Component IDs are per-World and assigned in first-write order.
+//
+// ok is false when schemaName was never declared on this World (see
+// World.RegisterComponent / WithComponents / AddRegistry, or a Component[T]
+// descriptor write). Undeclared names are never interned: a typo cannot grow
+// the per-World component table, it surfaces as an error from the caller
+// (SetComponent) instead.
+func (w *World) compID(name string) (uint32, bool) {
 	if id, ok := w.compIDs[name]; ok {
-		return id
+		return id, true
 	}
+	if !w.RegisteredComponent(name) {
+		return 0, false
+	}
+	return w.internCompID(name), true
+}
+
+// internCompID allocates the dense ID for an already-declared name and returns
+// it. Callers must have checked declaration through compID.
+func (w *World) internCompID(name string) uint32 {
 	id := uint32(len(w.compNames))
 	w.compIDs[name] = id
 	w.compNames = append(w.compNames, name)

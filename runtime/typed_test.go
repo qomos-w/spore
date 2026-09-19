@@ -31,7 +31,9 @@ func TestTypedSetGetRoundTrip(t *testing.T) {
 }
 
 func TestTypedGetInteropsWithStringAPI(t *testing.T) {
-	w := NewWorld()
+	// The string API requires the component name to be declared on the World
+	// first; the typed descriptor below declares its own name on write.
+	w := NewWorld(WithComponents("Position"))
 	e := w.Create()
 
 	if err := w.SetComponent(e, "Position", &typedPosition{X: 7}); err != nil {

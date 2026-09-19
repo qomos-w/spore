@@ -159,7 +159,7 @@ func scalarT(name string) schema.TypeDesc {
 }
 
 func ecsBenchSetup(t testing.TB, n int) (*script.Runtime, *runtime.World) {
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents("Health"))
 	desc, err := schema.DescribeGoStruct(&benchHealth{})
 	if err != nil {
 		t.Fatalf("DescribeGoStruct: %v", err)
@@ -346,7 +346,7 @@ func ecsBenchBatchSetup(t testing.TB, n int) (*script.Runtime, *runtime.World) {
 // constructs its own Runtime via script.NewRuntimeWith and reuses this
 // to wire the bindings.
 func ecsBenchBatchSetupInto(t testing.TB, rt *script.Runtime, n int) (*script.Runtime, *runtime.World) {
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents("Health"))
 	desc, err := schema.DescribeGoStruct(&benchHealth{})
 	if err != nil {
 		t.Fatalf("DescribeGoStruct: %v", err)
@@ -492,7 +492,7 @@ func BenchmarkEcsGo_ViewBodyBatch(b *testing.B) {
 				// Fresh world per iteration keeps the timing
 				// representative of steady-state drain (Health is
 				// reset on every iteration through the seed loop).
-				w := runtime.NewWorld()
+				w := runtime.NewWorld(runtime.WithComponents("Health"))
 				desc, err := schema.DescribeGoStruct(&benchHealth{})
 				if err != nil {
 					b.Fatalf("DescribeGoStruct: %v", err)

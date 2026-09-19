@@ -88,6 +88,17 @@ type World struct {
 	// table (see AddRegistry): Go component type → canonical schema name.
 	// It backs the descriptor-free facade (SetT/GetT/...) and LookupComponent.
 	typeToName map[reflect.Type]string
+
+	// compDecl is the per-World component-name whitelist: every name this
+	// World is allowed to store. Names are declared through AddRegistry
+	// (codegen), RegisterComponent/RegisterComponents/WithComponents, a
+	// Component[T] descriptor write (World.Set / Ref.Set / Aggregate.Attach),
+	// or ecsbind.WorldBinding.RegisterComponent.
+	//
+	// compIDs/compNames/compSets (storage.go) only ever intern declared
+	// names, so an undeclared (typo) name is refused at the write path
+	// instead of silently becoming a permanent component slot.
+	compDecl map[string]struct{}
 }
 
 // entityState holds the per-entity component data and change tracking.
@@ -112,6 +123,7 @@ func NewWorld(opts ...WorldOption) *World {
 	w := &World{
 		entities:   make(map[identity.CanonicalID]*entityState),
 		compIDs:    make(map[string]uint32),
+		compDecl:   make(map[string]struct{}),
 		typeToName: make(map[reflect.Type]string),
 		startTime:  now,
 	}
@@ -270,10 +282,25 @@ func (w *World) Entity(id identity.CanonicalID) (Entity, bool) {
 // If the entity already has a component with the same name, it is overwritten.
 // Returns an error if the entity is disposed or does not exist.
 //
+// The schema name must be declared on this World first (see
+// World.RegisterComponent / WithComponents / AddRegistry, or a Component[T]
+// descriptor write). An undeclared name returns an error and allocates
+// nothing: a typo can no longer become a permanent component slot.
+//
 // For compile-time type safety in Go host code, prefer the typed method
 // World.Set with a Component[T] descriptor (runtime/typed.go). The string
 // API remains the interop surface for scripts and bindings.
 func (w *World) SetComponent(e Entity, schemaName string, data any) error {
+	return w.setComponent(e, schemaName, data, false)
+}
+
+// setComponent is the shared body of the two write surfaces. declare=true is
+// the descriptor path (World.Set / Ref.Set / Aggregate.Register): the name is
+// declared on the World before it is required, so a Go-level Component[T]
+// declaration needs no separate registration call. The declaration happens
+// only once the write is viable — a failed write must not grow the vocabulary
+// either.
+func (w *World) setComponent(e Entity, schemaName string, data any, declare bool) error {
 	state := w.entityState(e)
 	if state == nil {
 		return &EntityError{EntityID: e.ID(), Err: fmt.Errorf("entity not found")}
@@ -282,7 +309,13 @@ func (w *World) SetComponent(e Entity, schemaName string, data any) error {
 		return &EntityError{EntityID: e.ID(), Err: fmt.Errorf("entity is disposed")}
 	}
 
-	id := w.compID(schemaName)
+	if declare {
+		_ = w.RegisterComponent(schemaName)
+	}
+	id, ok := w.compID(schemaName)
+	if !ok {
+		return undeclaredComponentErr(e.ID(), schemaName)
+	}
 	existed := maskHas(state.has, id)
 	w.setAdd(state, id)
 	maskSet(&state.has, id)
@@ -297,8 +330,38 @@ func (w *World) SetComponent(e Entity, schemaName string, data any) error {
 	return nil
 }
 
+// undeclaredComponentErr is the single error shape for "this World does not
+// accept that component name": used by the write path (SetComponent) and by
+// the strict read gate (RequireDeclaredComponent). It is an *EntityError like
+// the other component-access failures, so callers can errors.As it and read
+// the diagnostics envelope.
+func undeclaredComponentErr(id identity.CanonicalID, name string) error {
+	return &EntityError{EntityID: id, Err: fmt.Errorf("component %q is not declared on this World: declare it via World.RegisterComponent(s), runtime.WithComponents, AddRegistry, a Component[T] descriptor, or ecsbind.WorldBinding.RegisterComponent", name)}
+}
+
+// RequireDeclaredComponent returns an error when name was never declared on
+// this World, and nil when it was.
+//
+// GetComponent reports an undeclared name exactly like a declared-but-absent
+// one (nil, false) and never allocates, so the plain read path cannot tell a
+// typo from a missing component by design — the bool idiom is what scripts and
+// bindings are built on. Callers that must make that distinction check this
+// gate first.
+func (w *World) RequireDeclaredComponent(name string) error {
+	if w.RegisteredComponent(name) {
+		return nil
+	}
+	return undeclaredComponentErr(identity.CanonicalID{}, name)
+}
+
 // GetComponent retrieves a component by schema name.
 // Returns the component data and true if found, or nil and false otherwise.
+//
+// Reads never declare and never allocate: a name that is not declared on this
+// World (or declared but never written) is reported as absent, exactly like a
+// declared-but-absent component. The erroring side of the undeclared-name
+// contract lives on SetComponent (the only path that could grow the component
+// table) and on RequireDeclaredComponent (the strict read gate).
 //
 // For compile-time type safety in Go host code, prefer the typed method
 // World.Get with a Component[T] descriptor (runtime/typed.go).

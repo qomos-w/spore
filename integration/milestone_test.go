@@ -783,7 +783,7 @@ func milestoneHealthClassDesc() schema.ObjectDesc {
 }
 
 func TestMilestone_RuntimeCarrier_EntityProjectionRoundTrip(t *testing.T) {
-	w := runtime.NewWorld(runtime.WithSlot(1))
+	w := runtime.NewWorld(runtime.WithSlot(1), runtime.WithComponents("Position"))
 	codec := &transport.JSONCodec{}
 	posDesc := milestonePositionClassDesc()
 
@@ -842,7 +842,7 @@ func TestMilestone_RuntimeCarrier_EntityProjectionRoundTrip(t *testing.T) {
 }
 
 func TestMilestone_RuntimeCarrier_QueryAndChangeTracking(t *testing.T) {
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents("Position", "Velocity"))
 
 	// Create entities with different components
 	e1 := w.Create()
@@ -889,7 +889,7 @@ func TestMilestone_RuntimeCarrier_QueryAndChangeTracking(t *testing.T) {
 }
 
 func TestMilestone_RuntimeCarrier_EntityLifecycleWithProjection(t *testing.T) {
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents("Position"))
 	codec := &transport.JSONCodec{}
 	posDesc := milestonePositionClassDesc()
 
@@ -919,7 +919,7 @@ func TestMilestone_RuntimeCarrier_EntityLifecycleWithProjection(t *testing.T) {
 }
 
 func TestMilestone_RuntimeCarrier_IdentityConsistencyAcrossPlanes(t *testing.T) {
-	w := runtime.NewWorld(runtime.WithSlot(7), runtime.WithIncarnation(2))
+	w := runtime.NewWorld(runtime.WithSlot(7), runtime.WithIncarnation(2), runtime.WithComponents("Position"))
 	codec := &transport.JSONCodec{}
 	posDesc := milestonePositionClassDesc()
 
@@ -957,7 +957,7 @@ func TestMilestone_RuntimeCarrier_IdentityConsistencyAcrossPlanes(t *testing.T) 
 }
 
 func TestMilestone_RuntimeCarrier_StateChangeProjectionToTransportPatch(t *testing.T) {
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents("Position", "Velocity", "Health"))
 	codec := &transport.JSONCodec{}
 	componentDescs := map[string]schema.ObjectDesc{
 		"Position": milestonePositionClassDesc(),
@@ -1043,7 +1043,7 @@ func TestMilestone_RuntimeCarrier_StateChangeProjectionToTransportPatch(t *testi
 }
 
 func TestMilestone_SporeClosure_RuntimeCarrierCallableAndTransport(t *testing.T) {
-	w := runtime.NewWorld(runtime.WithSlot(3))
+	w := runtime.NewWorld(runtime.WithSlot(3), runtime.WithComponents("Health"))
 	codec := &transport.JSONCodec{}
 	sb := binding.NewScriptBinding()
 
@@ -1148,6 +1148,12 @@ func TestMilestone_ExternalConsumer_UsesOnlySporeSurfaces(t *testing.T) {
 	applyCallableToObject := func(c consumer, obj objectSurface, callable string, args []any) (transport.View, transport.View, error) {
 		id := mustID(t, 3000, 9, 0, 1)
 		w := runtime.NewWorld()
+		// Declare the component name explicitly: the World only accepts
+		// declared names, and this consumer drives the name from its schema
+		// descriptor rather than from codegen.
+		if err := w.RegisterComponent(obj.classDesc.Name); err != nil {
+			return transport.View{}, transport.View{}, err
+		}
 		carrier := w.CreateWithID(id)
 		if err := w.SetComponent(carrier, obj.classDesc.Name, obj.target); err != nil {
 			return transport.View{}, transport.View{}, err
@@ -1671,7 +1677,7 @@ func TestMilestone_ScriptLanguageFuture_RuntimeBoundary_NoVMObjectsInWorld(t *te
 		Fields: []schema.FieldDesc{{Name: "Value", Type: schema.TypeDesc{Kind: schema.TypeKindScalar, Name: "int"}}},
 	}
 
-	w := runtime.NewWorld()
+	w := runtime.NewWorld(runtime.WithComponents(scriptStateDesc.Name))
 	codec := &transport.JSONCodec{}
 	sb := binding.NewScriptBinding()
 
@@ -1778,7 +1784,7 @@ func lifecycleTestClassDesc() schema.ObjectDesc {
 }
 
 func TestMilestone_BindingLifecycle_EntityDisposeInvalidatesBinding(t *testing.T) {
-	w := runtime.NewWorld(runtime.WithSlot(5))
+	w := runtime.NewWorld(runtime.WithSlot(5), runtime.WithComponents("lifecycleTestItem"))
 	sb := binding.NewScriptBinding()
 	codec := &transport.JSONCodec{}
 

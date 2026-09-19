@@ -133,9 +133,11 @@ func TestReAddAfterRemoveChangeTracking(t *testing.T) {
 	}
 }
 
-// Components stored with nil data count as present (map semantics).
+// Components stored with nil data count as present (map semantics). The
+// component name is declared at construction: the World rejects undeclared
+// names (type_registry.go, component-name whitelist).
 func TestNilComponentDataCountsAsPresent(t *testing.T) {
-	w := NewWorld()
+	w := NewWorld(WithComponents("st.Nil"))
 	e := w.Create()
 	if err := w.SetComponent(e, "st.Nil", nil); err != nil {
 		t.Fatal(err)

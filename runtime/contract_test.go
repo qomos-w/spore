@@ -23,7 +23,7 @@ import (
 
 func TestEntity_ID(t *testing.T) {
 	id := mustID(t, 1000, 1, 0, 1)
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.CreateWithID(id)
 
 	if e.ID() != id {
@@ -39,7 +39,7 @@ func TestEntity_ZeroValue_IsZero(t *testing.T) {
 }
 
 func TestEntity_CreatedEntity_NotZero(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if e.IsZero() {
 		t.Fatal("newly created entity should not be zero")
@@ -48,7 +48,7 @@ func TestEntity_CreatedEntity_NotZero(t *testing.T) {
 
 func TestEntity_Comparable(t *testing.T) {
 	// Entity must be usable as a map key
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e1 := w.Create()
 	e2 := w.Create()
 
@@ -61,7 +61,7 @@ func TestEntity_Comparable(t *testing.T) {
 }
 
 func TestEntity_SameEntity_Equal(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e1 := w.Create()
 
 	// Look up the same entity from the world
@@ -79,7 +79,7 @@ func TestEntity_SameEntity_Equal(t *testing.T) {
 // ============================================================================
 
 func TestWorld_Create_GeneratesCanonicalID(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	if e.IsZero() {
@@ -92,7 +92,7 @@ func TestWorld_Create_GeneratesCanonicalID(t *testing.T) {
 
 func TestWorld_CreateWithID_UsesProvidedID(t *testing.T) {
 	id := mustID(t, 2000, 1, 0, 42)
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.CreateWithID(id)
 
 	if e.ID() != id {
@@ -101,7 +101,7 @@ func TestWorld_CreateWithID_UsesProvidedID(t *testing.T) {
 }
 
 func TestWorld_CreateIDs_MonotonicallyIncreasing(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e1 := w.Create()
 	e2 := w.Create()
 
@@ -112,7 +112,7 @@ func TestWorld_CreateIDs_MonotonicallyIncreasing(t *testing.T) {
 }
 
 func TestWorld_Dispose(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	if !w.IsAlive(e) {
@@ -127,7 +127,7 @@ func TestWorld_Dispose(t *testing.T) {
 }
 
 func TestWorld_Dispose_Idempotent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	w.Dispose(e)
@@ -139,7 +139,7 @@ func TestWorld_Dispose_Idempotent(t *testing.T) {
 }
 
 func TestWorld_IsAlive_NonExistent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	id := mustID(t, 1000, 1, 0, 99)
 	fakeEntity := runtime.MakeEntity(id, w)
 
@@ -149,7 +149,7 @@ func TestWorld_IsAlive_NonExistent(t *testing.T) {
 }
 
 func TestWorld_EntityCount(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	if w.EntityCount() != 0 {
 		t.Fatalf("expected 0 entities, got %d", w.EntityCount())
 	}
@@ -173,7 +173,7 @@ func TestWorld_EntityCount(t *testing.T) {
 }
 
 func TestWorld_Entity_Lookup(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	found, ok := w.Entity(e.ID())
@@ -186,7 +186,7 @@ func TestWorld_Entity_Lookup(t *testing.T) {
 }
 
 func TestWorld_Entity_NotFound(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	id := mustID(t, 1000, 1, 0, 99)
 	_, ok := w.Entity(id)
 	if ok {
@@ -208,8 +208,19 @@ type velocityComponent struct {
 	DY float64
 }
 
+// componentWorld returns a World with the component vocabulary exercised by
+// this file's string-keyed API tests declared up front. The runtime refuses
+// undeclared component names by design — an undeclared name is an error at the
+// write path instead of a silently created component slot (see
+// runtime/type_registry.go, component-name whitelist).
+func componentWorld() *runtime.World {
+	return runtime.NewWorld(
+		runtime.WithComponents("Position", "Velocity", "Health", "Static"),
+	)
+}
+
 func TestWorld_SetComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	pos := positionComponent{X: 10, Y: 20}
@@ -229,7 +240,7 @@ func TestWorld_SetComponent(t *testing.T) {
 }
 
 func TestWorld_SetComponent_Overwrite(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	w.SetComponent(e, "Position", &positionComponent{X: 1, Y: 2})
@@ -243,7 +254,7 @@ func TestWorld_SetComponent_Overwrite(t *testing.T) {
 }
 
 func TestWorld_GetComponent_NotFound(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	_, ok := w.GetComponent(e, "Position")
@@ -253,7 +264,7 @@ func TestWorld_GetComponent_NotFound(t *testing.T) {
 }
 
 func TestWorld_RemoveComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	w.SetComponent(e, "Position", &positionComponent{X: 1, Y: 2})
@@ -266,7 +277,7 @@ func TestWorld_RemoveComponent(t *testing.T) {
 }
 
 func TestWorld_RemoveComponent_NonExistent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	// Removing non-existent component should not panic
@@ -274,7 +285,7 @@ func TestWorld_RemoveComponent_NonExistent(t *testing.T) {
 }
 
 func TestWorld_HasComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	if w.HasComponent(e, "Position") {
@@ -288,7 +299,7 @@ func TestWorld_HasComponent(t *testing.T) {
 }
 
 func TestWorld_Component_OnDisposedEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 1, Y: 2})
 	w.Dispose(e)
@@ -307,7 +318,7 @@ func TestWorld_Component_OnDisposedEntity(t *testing.T) {
 }
 
 func TestWorld_AllComponentNames(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{})
 	w.SetComponent(e, "Velocity", &velocityComponent{})
@@ -381,7 +392,7 @@ func TestWorld_Create_GeneratedEntityID_UsesCanonicalLayoutFromWorldOptions(t *t
 // ============================================================================
 
 func TestQuery_Has(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{X: 1, Y: 2})
@@ -408,7 +419,7 @@ func TestQuery_Has(t *testing.T) {
 }
 
 func TestQuery_HasMultiple(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -429,7 +440,7 @@ func TestQuery_HasMultiple(t *testing.T) {
 }
 
 func TestQuery_HasNone(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -449,7 +460,7 @@ func TestQuery_HasNone(t *testing.T) {
 }
 
 func TestQuery_HasEither(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -468,7 +479,7 @@ func TestQuery_HasEither(t *testing.T) {
 }
 
 func TestQuery_WhenAdded(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -495,7 +506,7 @@ func TestQuery_WhenAdded(t *testing.T) {
 }
 
 func TestQuery_WhenChanged(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	pos := positionComponent{X: 1, Y: 2}
@@ -515,7 +526,7 @@ func TestQuery_WhenChanged(t *testing.T) {
 }
 
 func TestQuery_WhenRemoved(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -532,7 +543,7 @@ func TestQuery_WhenRemoved(t *testing.T) {
 }
 
 func TestQuery_EmptyQuery_ReturnsAllAlive(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e1 := w.Create()
 	e2 := w.Create()
 	w.Dispose(e1)
@@ -549,7 +560,7 @@ func TestQuery_EmptyQuery_ReturnsAllAlive(t *testing.T) {
 }
 
 func TestQuery_CombinedFilters(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 
 	e1 := w.Create()
 	w.SetComponent(e1, "Position", &positionComponent{})
@@ -576,7 +587,7 @@ func TestQuery_CombinedFilters(t *testing.T) {
 // ============================================================================
 
 func TestWorld_ChangeSet_Added(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{})
 
@@ -587,7 +598,7 @@ func TestWorld_ChangeSet_Added(t *testing.T) {
 }
 
 func TestWorld_ChangeSet_Changed(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 1})
 	w.ClearChanges(e)
@@ -607,7 +618,7 @@ func TestWorld_ChangeSet_Changed(t *testing.T) {
 }
 
 func TestWorld_ChangeSet_Removed(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{})
 	w.ClearChanges(e)
@@ -621,7 +632,7 @@ func TestWorld_ChangeSet_Removed(t *testing.T) {
 }
 
 func TestWorld_ClearChanges(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{})
 
@@ -641,7 +652,7 @@ func TestChangeSet_Empty(t *testing.T) {
 }
 
 func TestWorld_ChangeSet_DisposedEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.Dispose(e)
 
@@ -652,7 +663,7 @@ func TestWorld_ChangeSet_DisposedEntity(t *testing.T) {
 }
 
 func TestWorld_SetComponent_OverwriteTrackedAsChanged(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 1})
 	w.ClearChanges(e)
@@ -679,7 +690,7 @@ func TestWorld_SetComponent_OverwriteTrackedAsChanged(t *testing.T) {
 // ============================================================================
 
 func TestWorld_ProjectEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 10.5, Y: 20.3})
 
@@ -704,7 +715,7 @@ func TestWorld_ProjectEntity(t *testing.T) {
 }
 
 func TestWorld_ProjectEntity_ComponentNotFound(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 
 	posDesc := positionClassDesc()
@@ -723,7 +734,7 @@ func TestWorld_ProjectEntity_ComponentNotFound(t *testing.T) {
 }
 
 func TestWorld_ProjectEntity_DisposedEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 1})
 	w.Dispose(e)
@@ -736,7 +747,7 @@ func TestWorld_ProjectEntity_DisposedEntity(t *testing.T) {
 }
 
 func TestWorld_ProjectEntityAll(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20})
 	w.SetComponent(e, "Velocity", &velocityComponent{DX: 1, DY: -1})
@@ -774,7 +785,7 @@ func TestWorld_ProjectEntityAll(t *testing.T) {
 }
 
 func TestWorld_PatchEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	pos := &positionComponent{X: 10, Y: 20}
 	w.SetComponent(e, "Position", pos)
@@ -812,7 +823,7 @@ func TestWorld_PatchEntity(t *testing.T) {
 }
 
 func TestWorld_ProjectEntityChangesToTransport_ChangedComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	pos := &positionComponent{X: 10, Y: 20}
 	if err := w.SetComponent(e, "Position", pos); err != nil {
@@ -862,7 +873,7 @@ func TestWorld_ProjectEntityChangesToTransport_ChangedComponent(t *testing.T) {
 }
 
 func TestWorld_ProjectEntityChangesToTransport_AddedAndRemovedComponents(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20}); err != nil {
 		t.Fatalf("SetComponent Position: %v", err)
@@ -926,7 +937,7 @@ func TestWorld_ProjectEntityChangesToTransport_AddedAndRemovedComponents(t *test
 }
 
 func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForChangedComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20}); err != nil {
 		t.Fatalf("SetComponent Position: %v", err)
@@ -956,7 +967,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForChangedCompon
 }
 
 func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForAddedComponent(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Velocity", &velocityComponent{DX: 1, DY: 2}); err != nil {
 		t.Fatalf("SetComponent Velocity: %v", err)
@@ -985,7 +996,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForAddedComponen
 }
 
 func TestWorld_ProjectEntityChangesToTransport_EmptyPatch(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20}); err != nil {
 		t.Fatalf("SetComponent: %v", err)
@@ -1032,7 +1043,7 @@ func TestWorld_ProjectEntityChangesToTransport_EmptyPatch(t *testing.T) {
 }
 
 func TestWorld_ProjectEntityChangesToTransport_MissingDescriptor(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20}); err != nil {
 		t.Fatalf("SetComponent: %v", err)
@@ -1051,7 +1062,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptor(t *testing.T) {
 }
 
 func TestWorld_ProjectEntityChangesToTransport_DisposedEntity(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	if err := w.SetComponent(e, "Position", &positionComponent{X: 10, Y: 20}); err != nil {
 		t.Fatalf("SetComponent: %v", err)
@@ -1320,7 +1331,7 @@ func (e *mockDiagnosticError) DiagnosticStack() []diagnostics.Frame { return app
 // ============================================================================
 
 func TestWorld_ProjectEntityToTransport(t *testing.T) {
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	w.SetComponent(e, "Position", &positionComponent{X: 10.5, Y: 20.3})
 
@@ -1357,7 +1368,7 @@ func TestWorld_ProjectEntityToTransport(t *testing.T) {
 
 func TestWorld_ProjectEntityToTransport_FullRoundTrip(t *testing.T) {
 	// Create entity, project to transport, decode, patch back
-	w := runtime.NewWorld()
+	w := componentWorld()
 	e := w.Create()
 	pos := &positionComponent{X: 100, Y: 200}
 	w.SetComponent(e, "Position", pos)
