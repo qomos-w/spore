@@ -1,4 +1,4 @@
-package binding
+package invoke
 
 // PipelineDesc is a host-facing descriptor for a pipeline declaration.
 // It is line-free and serializable for transport to hosting systems like myxos.

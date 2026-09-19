@@ -27,8 +27,8 @@ type namedEnumComp struct {
 // 内建 Go 类型:脚本 VM 与 JSON 消费方不认识自定义类型的装箱值。
 func TestProjectViewNormalisesNamedScalar(t *testing.T) {
 	desc := schema.ObjectDesc{
-		Name:   "NamedEnumComp",
-		Kind:   schema.TypeKindStruct,
+		Name: "NamedEnumComp",
+		Kind: schema.TypeKindStruct,
 		Fields: []schema.FieldDesc{
 			{Name: "Level", Type: schema.TypeDesc{Kind: schema.TypeKindScalar, Name: "int"}},
 			{Name: "Scale", Type: schema.TypeDesc{Kind: schema.TypeKindScalar, Name: "double"}},

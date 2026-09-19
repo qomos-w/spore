@@ -2,10 +2,10 @@ package frontend
 
 import (
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"sort"
 	"strings"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/schema"
 )
@@ -203,7 +203,7 @@ func variableImportResolution(path, requestedName, localName, targetPath, target
 	}
 }
 
-func nativeValueImportResolution(path, requestedName, localName string, desc binding.CapabilityValueDesc, reExport bool) ImportedSymbolMetadata {
+func nativeValueImportResolution(path, requestedName, localName string, desc invoke.CapabilityValueDesc, reExport bool) ImportedSymbolMetadata {
 	return ImportedSymbolMetadata{
 		Path:             path,
 		Name:             requestedName,
@@ -465,8 +465,8 @@ func (s *moduleLinkState) linkRoot(prog *program) (linkedProgram, error) {
 			}
 			return linked, moduleImportDiagnostic(moduleLinkError("missing_module_export", "frontend/link/import", fmt.Sprintf("module %q does not export %q", imp.Path, imp.Name)), imp, localName, "resolve_export", "module", imp.Path, availableExports(mod))
 		}
-		if s.frontend != nil && s.frontend.binding != nil {
-			if capDesc, ok := findCapabilityDesc(s.frontend.binding.DescribeCapabilities(), imp.Path); ok {
+		if s.frontend != nil && s.frontend.surface != nil {
+			if capDesc, ok := findCapabilityDesc(s.frontend.surface.DescribeCapabilities(), imp.Path); ok {
 				if callableName, ok := capabilityCallableName(capDesc, imp.Name); ok {
 					linked.importedSymbols = append(linked.importedSymbols, nativeImportResolution(imp.Path, imp.Name, localName, imp.Path+"."+callableName, imp.ReExport))
 					if imp.ReExport {
@@ -482,7 +482,7 @@ func (s *moduleLinkState) linkRoot(prog *program) (linkedProgram, error) {
 					continue
 				}
 				// Native capability type exports: check objects then type aliases.
-				if obj, ok := s.frontend.binding.FindCapabilityObject(imp.Path, imp.Name); ok {
+				if obj, ok := s.frontend.surface.FindCapabilityObject(imp.Path, imp.Name); ok {
 					linked.importedTypes = append(linked.importedTypes, nativeStructImportResolution(imp.Path, imp.Name, localName, obj.Name, &obj, imp.ReExport))
 					if imp.ReExport {
 						reObj := schema.CloneObjectDesc(obj)
@@ -491,9 +491,9 @@ func (s *moduleLinkState) linkRoot(prog *program) (linkedProgram, error) {
 					}
 					continue
 				}
-				if iface, ok := s.frontend.binding.FindCapabilityInterface(imp.Path, imp.Name); ok {
+				if iface, ok := s.frontend.surface.FindCapabilityInterface(imp.Path, imp.Name); ok {
 					linked.importedTypes = append(linked.importedTypes, nativeInterfaceImportResolution(imp.Path, imp.Name, localName, iface, imp.ReExport))
-					if desc, _, valueOK := s.frontend.binding.FindCapabilityValue(imp.Path, imp.Name); valueOK {
+					if desc, _, valueOK := s.frontend.surface.FindCapabilityValue(imp.Path, imp.Name); valueOK {
 						linked.importedSymbols = append(linked.importedSymbols, nativeValueImportResolution(imp.Path, imp.Name, localName, desc, imp.ReExport))
 					}
 					if imp.ReExport {
@@ -503,14 +503,14 @@ func (s *moduleLinkState) linkRoot(prog *program) (linkedProgram, error) {
 					}
 					continue
 				}
-				if td, ok := s.frontend.binding.FindCapabilityTypeAlias(imp.Path, imp.Name); ok {
+				if td, ok := s.frontend.surface.FindCapabilityTypeAlias(imp.Path, imp.Name); ok {
 					linked.importedTypes = append(linked.importedTypes, nativeTypeAliasImportResolution(imp.Path, imp.Name, localName, exportedTypeName(td), td, imp.ReExport))
 					if imp.ReExport {
 						linked.reExportedTypes = append(linked.reExportedTypes, ExportedTypeMetadata{Name: localName, Type: exportedTypeName(td), TypeDesc: td})
 					}
 					continue
 				}
-				if desc, _, ok := s.frontend.binding.FindCapabilityValue(imp.Path, imp.Name); ok {
+				if desc, _, ok := s.frontend.surface.FindCapabilityValue(imp.Path, imp.Name); ok {
 					linked.importedSymbols = append(linked.importedSymbols, nativeValueImportResolution(imp.Path, imp.Name, localName, desc, imp.ReExport))
 					if imp.ReExport {
 						linked.reExportedVariables = append(linked.reExportedVariables, ExportedVariableMetadata{Name: localName, Type: exportedTypeName(desc.Type)})
@@ -543,10 +543,10 @@ func appendForwardedNativeImport(symbols []ImportedSymbolMetadata, compiled Comp
 }
 
 func (s *moduleLinkState) appendNativeReExport(path string, imp *importStmt, compiled *CompiledDeclarations) bool {
-	if s == nil || s.frontend == nil || s.frontend.binding == nil || imp == nil || compiled == nil {
+	if s == nil || s.frontend == nil || s.frontend.surface == nil || imp == nil || compiled == nil {
 		return false
 	}
-	capDesc, ok := findCapabilityDesc(s.frontend.binding.DescribeCapabilities(), imp.Path)
+	capDesc, ok := findCapabilityDesc(s.frontend.surface.DescribeCapabilities(), imp.Path)
 	if !ok {
 		return false
 	}
@@ -565,7 +565,7 @@ func (s *moduleLinkState) appendNativeReExport(path string, imp *importStmt, com
 			reIface := schema.CloneInterfaceDesc(iface)
 			compiled.exportedInterfaces = append(compiled.exportedInterfaces, reIface)
 			compiled.importedTypes = append(compiled.importedTypes, nativeInterfaceImportResolution(imp.Path, iface.Name, iface.Name, iface, true))
-			if desc, _, valueOK := s.frontend.binding.FindCapabilityValue(imp.Path, iface.Name); valueOK {
+			if desc, _, valueOK := s.frontend.surface.FindCapabilityValue(imp.Path, iface.Name); valueOK {
 				compiled.importedSymbols = append(compiled.importedSymbols, nativeValueImportResolution(imp.Path, iface.Name, iface.Name, desc, true))
 			}
 		}
@@ -591,29 +591,29 @@ func (s *moduleLinkState) appendNativeReExport(path string, imp *importStmt, com
 		compiled.importedSymbols = append(compiled.importedSymbols, nativeImportResolutionWithTarget(path, imp.Name, imp.Name, imp.Path, imp.Path+"."+callableName, true))
 		return true
 	}
-	if obj, ok := s.frontend.binding.FindCapabilityObject(imp.Path, imp.Name); ok {
+	if obj, ok := s.frontend.surface.FindCapabilityObject(imp.Path, imp.Name); ok {
 		reObj := schema.CloneObjectDesc(obj)
 		reObj.Name = imp.Name
 		compiled.exportedObjects = append(compiled.exportedObjects, reObj)
 		compiled.importedTypes = append(compiled.importedTypes, nativeStructImportResolution(imp.Path, imp.Name, imp.Name, obj.Name, &obj, true))
 		return true
 	}
-	if iface, ok := s.frontend.binding.FindCapabilityInterface(imp.Path, imp.Name); ok {
+	if iface, ok := s.frontend.surface.FindCapabilityInterface(imp.Path, imp.Name); ok {
 		reIface := schema.CloneInterfaceDesc(iface)
 		reIface.Name = imp.Name
 		compiled.exportedInterfaces = append(compiled.exportedInterfaces, reIface)
 		compiled.importedTypes = append(compiled.importedTypes, nativeInterfaceImportResolution(imp.Path, imp.Name, imp.Name, iface, true))
-		if desc, _, valueOK := s.frontend.binding.FindCapabilityValue(imp.Path, imp.Name); valueOK {
+		if desc, _, valueOK := s.frontend.surface.FindCapabilityValue(imp.Path, imp.Name); valueOK {
 			compiled.importedSymbols = append(compiled.importedSymbols, nativeValueImportResolution(imp.Path, imp.Name, imp.Name, desc, true))
 		}
 		return true
 	}
-	if td, ok := s.frontend.binding.FindCapabilityTypeAlias(imp.Path, imp.Name); ok {
+	if td, ok := s.frontend.surface.FindCapabilityTypeAlias(imp.Path, imp.Name); ok {
 		compiled.exportedTypes = append(compiled.exportedTypes, ExportedTypeMetadata{Name: imp.Name, Type: exportedTypeName(td), TypeDesc: td})
 		compiled.importedTypes = append(compiled.importedTypes, nativeTypeAliasImportResolution(imp.Path, imp.Name, imp.Name, exportedTypeName(td), td, true))
 		return true
 	}
-	if desc, _, ok := s.frontend.binding.FindCapabilityValue(imp.Path, imp.Name); ok {
+	if desc, _, ok := s.frontend.surface.FindCapabilityValue(imp.Path, imp.Name); ok {
 		compiled.exportedVariables = append(compiled.exportedVariables, ExportedVariableMetadata{Name: imp.Name, Type: exportedTypeName(desc.Type)})
 		compiled.importedSymbols = append(compiled.importedSymbols, nativeValueImportResolution(imp.Path, imp.Name, imp.Name, desc, true))
 		return true
@@ -942,16 +942,16 @@ func cloneInterfaceDescPtr(desc *schema.InterfaceDesc) *schema.InterfaceDesc {
 	return &cloned
 }
 
-func findCapabilityDesc(descs []binding.CapabilityDesc, name string) (binding.CapabilityDesc, bool) {
+func findCapabilityDesc(descs []invoke.CapabilityDesc, name string) (invoke.CapabilityDesc, bool) {
 	for _, desc := range descs {
 		if desc.Name == name {
 			return desc, true
 		}
 	}
-	return binding.CapabilityDesc{}, false
+	return invoke.CapabilityDesc{}, false
 }
 
-func capabilityCallableName(desc binding.CapabilityDesc, name string) (string, bool) {
+func capabilityCallableName(desc invoke.CapabilityDesc, name string) (string, bool) {
 	for _, callable := range desc.Callables {
 		if callable.Name == name {
 			return callable.Name, true

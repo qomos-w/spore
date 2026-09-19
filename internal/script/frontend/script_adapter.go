@@ -2,14 +2,14 @@ package frontend
 
 import (
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"sync"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/schema"
 )
 
-// ScriptCallableAdapter implements binding.ExecutableAdapter for a
+// ScriptCallableAdapter implements invoke.ExecutableAdapter for a
 // script-defined callable. It holds the compiled callable declaration
 // and delegates execution to the internal runtime backend, enriching error
 // diagnostics with script-specific context (diagnostic code, body
@@ -48,18 +48,18 @@ func (a *ScriptCallableAdapter) Callable() schema.CallableDesc {
 	return schema.CloneCallableDesc(a.desc)
 }
 
-func (a *ScriptCallableAdapter) Invoke(req binding.InvocationRequest) (binding.InvocationOutcome, error) {
+func (a *ScriptCallableAdapter) Invoke(req invoke.InvocationRequest) (invoke.InvocationOutcome, error) {
 	if a == nil {
-		return binding.InvocationOutcome{}, fmt.Errorf("script callable adapter is nil")
+		return invoke.InvocationOutcome{}, fmt.Errorf("script callable adapter is nil")
 	}
 	if req.Callable != a.desc.Name {
-		return binding.InvocationOutcome{}, fmt.Errorf("adapter for %q cannot handle %q", a.desc.Name, req.Callable)
+		return invoke.InvocationOutcome{}, fmt.Errorf("adapter for %q cannot handle %q", a.desc.Name, req.Callable)
 	}
-	if err := binding.ValidateInvocationStage(a.desc, req.Stage); err != nil {
-		return binding.InvocationOutcome{}, err
+	if err := invoke.ValidateInvocationStage(a.desc, req.Stage); err != nil {
+		return invoke.InvocationOutcome{}, err
 	}
-	if err := binding.ValidateInvocationArgs(a.desc, req.Args); err != nil {
-		return binding.InvocationOutcome{}, err
+	if err := invoke.ValidateInvocationArgs(a.desc, req.Args); err != nil {
+		return invoke.InvocationOutcome{}, err
 	}
 
 	var (
@@ -83,19 +83,19 @@ func (a *ScriptCallableAdapter) Invoke(req binding.InvocationRequest) (binding.I
 		if len(base.Stack) == 0 {
 			base.Stack = []diagnostics.Frame{{Callable: a.desc.Name, Stage: string(req.Stage)}}
 		}
-		result, err := binding.NewInvocationErrorDescWithDiagnostic(a.desc, req.Stage, base)
+		result, err := invoke.NewInvocationErrorDescWithDiagnostic(a.desc, req.Stage, base)
 		if err != nil {
-			return binding.InvocationOutcome{}, err
+			return invoke.InvocationOutcome{}, err
 		}
-		return binding.NewInvocationOutcome(result, nil)
+		return invoke.NewInvocationOutcome(result, nil)
 	}
 	if cached, ok := a.results.Load(req.Stage); ok {
-		return binding.NewInvocationOutcome(cached.(binding.InvocationResultDesc), payload)
+		return invoke.NewInvocationOutcome(cached.(invoke.InvocationResultDesc), payload)
 	}
-	result, err := binding.DescribeInvocationResult(a.desc, req.Stage)
+	result, err := invoke.DescribeInvocationResult(a.desc, req.Stage)
 	if err != nil {
-		return binding.InvocationOutcome{}, err
+		return invoke.InvocationOutcome{}, err
 	}
 	a.results.Store(req.Stage, result)
-	return binding.NewInvocationOutcome(result, payload)
+	return invoke.NewInvocationOutcome(result, payload)
 }

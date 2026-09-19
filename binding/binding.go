@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/qomos-w/spore/identity"
+	"github.com/qomos-w/spore/invoke"
 	"github.com/qomos-w/spore/schema"
 )
 
@@ -42,6 +43,25 @@ func NewScriptBinding() *ScriptBinding {
 		Capabilities: NewMemoryCapabilityRegistry(),
 		objects:      make(map[identity.CanonicalID]*ObjectBinding),
 	}
+}
+
+// CallableSource exposes the callable registry as the engine-facing
+// invoke.CallableSource. Returns nil when the registry is absent so
+// engine-side nil checks stay meaningful.
+func (sb *ScriptBinding) CallableSource() invoke.CallableSource {
+	if sb == nil || sb.Callables == nil {
+		return nil
+	}
+	return sb.Callables
+}
+
+// ExecutorSource exposes the executable registry as the engine-facing
+// invoke.ExecutorSource. Returns nil when the registry is absent.
+func (sb *ScriptBinding) ExecutorSource() invoke.ExecutorSource {
+	if sb == nil || sb.Executors == nil {
+		return nil
+	}
+	return sb.Executors
 }
 
 // BindFunction describes a Go function via reflection, registers it as a

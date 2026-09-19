@@ -6,25 +6,6 @@ import (
 	"github.com/qomos-w/spore/schema"
 )
 
-// CapabilityDesc describes a host-provided native capability namespace.
-type CapabilityDesc struct {
-	Name        string
-	Kind        string
-	Callables   []schema.CallableDesc
-	Objects     []schema.ObjectDesc
-	Interfaces  []schema.InterfaceDesc
-	TypeAliases map[string]schema.TypeDesc
-	Values      []CapabilityValueDesc
-	Pipelines   []PipelineDesc
-	Metadata    map[string]string
-}
-
-// CapabilityValueDesc describes a read-only native value exported by a capability.
-type CapabilityValueDesc struct {
-	Name string
-	Type schema.TypeDesc
-}
-
 // CapabilityCallable is a schema-described native callable inside a capability.
 type CapabilityCallable interface {
 	Desc() schema.CallableDesc

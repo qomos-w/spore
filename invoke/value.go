@@ -1,4 +1,4 @@
-package binding
+package invoke
 
 import (
 	"errors"
@@ -279,6 +279,13 @@ func matchesScalarType(name string, kind reflect.Kind) bool {
 		return true
 	}
 	return false
+}
+
+// ValidatePayloadValueAgainstType checks a reflected payload value against a
+// schema type descriptor. Exported for the binding layer's input marshaling
+// guards, which share this contract validation.
+func ValidatePayloadValueAgainstType(expected schema.TypeDesc, actual reflect.Value) error {
+	return validatePayloadValueAgainstType(expected, actual)
 }
 
 func inferValueCarrierKind(value any) ValueCarrierKind {

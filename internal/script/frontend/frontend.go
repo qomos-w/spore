@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"sort"
 	"strings"
 	"unicode"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/schema"
 )
@@ -17,7 +17,7 @@ import (
 // plane. It snapshots canonical callable descriptors and dispatches invocation
 // through ScriptBinding without introducing a parallel descriptor or result model.
 type Frontend struct {
-	binding           *binding.ScriptBinding
+	surface           invoke.ScriptSurface
 	vmCompileHook     VMLoweringBackend
 	moduleResolver    ModuleResolver
 	callables         map[string]callableEntry
@@ -46,11 +46,11 @@ type objectEntry struct {
 
 // New constructs an internal frontend from an existing ScriptBinding and
 // snapshots its registered callable descriptors.
-func New(sb *binding.ScriptBinding) (*Frontend, error) {
+func New(sb invoke.ScriptSurface) (*Frontend, error) {
 	if sb == nil {
 		return nil, fmt.Errorf("script binding is required")
 	}
-	f := &Frontend{binding: sb}
+	f := &Frontend{surface: sb}
 
 	f.Refresh()
 	return f, nil
@@ -64,10 +64,10 @@ func (f *Frontend) Refresh() {
 	f.callables = make(map[string]callableEntry)
 	f.objects = make(map[string]objectEntry)
 	f.interfaces = nil
-	if f.binding == nil || f.binding.Callables == nil {
+	if f.surface == nil || f.surface.CallableSource() == nil {
 		return
 	}
-	for _, desc := range f.binding.Callables.List() {
+	for _, desc := range f.surface.CallableSource().List() {
 		entry := callableEntry{desc: schema.CloneCallableDesc(desc)}
 		for _, exported := range f.exports {
 			if exported.Name == desc.Name {
@@ -82,7 +82,7 @@ func (f *Frontend) Refresh() {
 // LoadSource parses a minimal internal script frontend source and registers the
 // resulting canonical descriptors into the frontend and backing ScriptBinding.
 func (f *Frontend) LoadSource(source string) error {
-	if f == nil || f.binding == nil || f.binding.Callables == nil || f.binding.Executors == nil {
+	if f == nil || f.surface == nil || f.surface.CallableSource() == nil || f.surface.ExecutorSource() == nil {
 		return fmt.Errorf("script binding is required")
 	}
 	prog, err := parseModule(source)
@@ -572,14 +572,14 @@ func matchesImporterName(importer ModuleImporter, exportName string) bool {
 func (f *Frontend) registerCompiledDeclarations(compiled CompiledDeclarations) error {
 	for _, callable := range compiled.CallableDeclarations() {
 		desc := callable.Desc
-		if err := f.binding.Callables.Register(desc); err != nil {
+		if err := f.surface.CallableSource().Register(desc); err != nil {
 			return err
 		}
 		adapter, err := NewScriptCallableAdapter(desc, runtimeBackendFromVMLowering(f.vmCompileHook))
 		if err != nil {
 			return err
 		}
-		if err := f.binding.Executors.RegisterAdapter(adapter); err != nil {
+		if err := f.surface.ExecutorSource().RegisterAdapter(adapter); err != nil {
 			return err
 		}
 	}
@@ -678,19 +678,19 @@ func (f *Frontend) Objects() map[string]schema.ObjectDesc {
 }
 
 // Invoke dispatches through the existing ScriptBinding invocation path.
-func (f *Frontend) Invoke(callable string, args []any) (binding.InvocationOutcome, error) {
-	return f.InvokeStage(callable, binding.InvocationStageUnary, args)
+func (f *Frontend) Invoke(callable string, args []any) (invoke.InvocationOutcome, error) {
+	return f.InvokeStage(callable, invoke.InvocationStageUnary, args)
 }
 
-func (f *Frontend) InvokeStage(callable string, stage binding.InvocationStage, args []any) (binding.InvocationOutcome, error) {
-	return f.InvokeStageContext(context.Background(), binding.ExecutionBudget{}, callable, stage, args)
+func (f *Frontend) InvokeStage(callable string, stage invoke.InvocationStage, args []any) (invoke.InvocationOutcome, error) {
+	return f.InvokeStageContext(context.Background(), invoke.ExecutionBudget{}, callable, stage, args)
 }
 
-func (f *Frontend) InvokeStageContext(ctx context.Context, budget binding.ExecutionBudget, callable string, stage binding.InvocationStage, args []any) (binding.InvocationOutcome, error) {
-	if f == nil || f.binding == nil {
-		return binding.InvocationOutcome{}, fmt.Errorf("script binding is required")
+func (f *Frontend) InvokeStageContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (invoke.InvocationOutcome, error) {
+	if f == nil || f.surface == nil {
+		return invoke.InvocationOutcome{}, fmt.Errorf("script binding is required")
 	}
-	return f.binding.Invoke(binding.InvocationRequest{
+	return f.surface.Invoke(invoke.InvocationRequest{
 		Callable: callable,
 		Stage:    stage,
 		Args:     args,
@@ -848,12 +848,12 @@ func (e parseError) DiagnosticExpected() string { return e.expected }
 func (e parseError) DiagnosticActual() string   { return e.actual }
 
 func noEvaluatorError(callable string) error {
-	frame := diagnostics.Frame{Callable: callable, Stage: string(binding.InvocationStageUnary)}
+	frame := diagnostics.Frame{Callable: callable, Stage: string(invoke.InvocationStageUnary)}
 	return &sourceEvalError{
 		code:        diagNoEvaluator,
 		category:    diagnostics.CategoryHost,
 		callable:    callable,
-		stage:       string(binding.InvocationStageUnary),
+		stage:       string(invoke.InvocationStageUnary),
 		stack:       []diagnostics.Frame{frame},
 		baseMessage: fmt.Sprintf("source-defined callable %q has no evaluator", callable),
 	}

@@ -86,12 +86,12 @@ func (f *funStmt) pos() (int, int) { return f.tok.line, f.tok.col }
 func (f *funStmt) stmtNode()       {}
 
 type structStmt struct {
-	tok          token
-	Name         *ident
-	Fields       []*astFieldDecl
-	Exported     bool
-	SchemaID     uint64
-	IsComponent  bool
+	tok         token
+	Name        *ident
+	Fields      []*astFieldDecl
+	Exported    bool
+	SchemaID    uint64
+	IsComponent bool
 }
 
 func (s *structStmt) pos() (int, int) { return s.tok.line, s.tok.col }

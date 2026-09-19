@@ -3,9 +3,9 @@ package bytecode
 import (
 	"context"
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"math"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/internal/script/vm"
 )
@@ -64,8 +64,8 @@ type deferEntry struct {
 type Interpreter struct {
 	vm_            *vm.VM
 	ctx            context.Context
-	budget         binding.ExecutionBudget
-	execution      *binding.ExecutionState
+	budget         invoke.ExecutionBudget
+	execution      *invoke.ExecutionState
 	rootProviderID int
 	chunk          *chunk
 	functions      map[string]*chunk
@@ -174,13 +174,13 @@ func (interp *Interpreter) setNativeValueResolver(resolver nativeValueResolver) 
 
 // Execute runs the main chunk from start to halt.
 func (interp *Interpreter) Execute(mainChunk *chunk, functions map[string]*chunk) (vm.Value, error) {
-	return interp.executeWithContext(context.Background(), binding.ExecutionBudget{}, mainChunk, functions)
+	return interp.executeWithContext(context.Background(), invoke.ExecutionBudget{}, mainChunk, functions)
 }
 
-func (interp *Interpreter) executeWithContext(ctx context.Context, budget binding.ExecutionBudget, mainChunk *chunk, functions map[string]*chunk) (vm.Value, error) {
+func (interp *Interpreter) executeWithContext(ctx context.Context, budget invoke.ExecutionBudget, mainChunk *chunk, functions map[string]*chunk) (vm.Value, error) {
 	interp.ctx = ctx
 	interp.budget = budget
-	interp.execution = &binding.ExecutionState{}
+	interp.execution = &invoke.ExecutionState{}
 	interp.chunk = mainChunk
 	interp.functions = functions
 	interp.ip = 0
@@ -188,7 +188,7 @@ func (interp *Interpreter) executeWithContext(ctx context.Context, budget bindin
 	for interp.ip < len(interp.chunk.code) {
 		if interp.execution != nil {
 			interp.execution.Instructions++
-			if err := binding.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
+			if err := invoke.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
 				return vm.EncodeInt(0), err
 			}
 		}
@@ -214,10 +214,10 @@ func (interp *Interpreter) ExecuteUntilYield(fnChunk *chunk, args []vm.Value) (v
 	return interp.runUntilBoundary(fnChunk, 0, nil, nil, args, true, true)
 }
 
-func (interp *Interpreter) ExecuteUntilYieldContext(ctx context.Context, budget binding.ExecutionBudget, fnChunk *chunk, args []vm.Value) (vm.Value, int, []vm.Value, []vm.Value, error) {
+func (interp *Interpreter) ExecuteUntilYieldContext(ctx context.Context, budget invoke.ExecutionBudget, fnChunk *chunk, args []vm.Value) (vm.Value, int, []vm.Value, []vm.Value, error) {
 	interp.ctx = ctx
 	interp.budget = budget
-	interp.execution = &binding.ExecutionState{}
+	interp.execution = &invoke.ExecutionState{}
 	return interp.runUntilBoundary(fnChunk, 0, nil, nil, args, true, true)
 }
 
@@ -343,7 +343,7 @@ func (interp *Interpreter) runUntilBoundary(fnChunk *chunk, ip int, stack []vm.V
 			}
 			deferErr = nil
 		}
-		frame := diagnostics.Frame{Callable: interp.function, Stage: string(binding.InvocationStageUnary), Span: diagnostics.Span{Start: diagnostics.Position{Line: interp.lineForIP(), Column: 0}, End: diagnostics.Position{Line: interp.lineForIP(), Column: 0}}}
+		frame := diagnostics.Frame{Callable: interp.function, Stage: string(invoke.InvocationStageUnary), Span: diagnostics.Span{Start: diagnostics.Position{Line: interp.lineForIP(), Column: 0}, End: diagnostics.Position{Line: interp.lineForIP(), Column: 0}}}
 		if rtErr, ok := err.(*RuntimeError); ok {
 			if len(rtErr.Stack) == 0 {
 				rtErr.Stack = interp.logicalStack(frame)
@@ -356,7 +356,7 @@ func (interp *Interpreter) runUntilBoundary(fnChunk *chunk, ip int, stack []vm.V
 	for interp.ip < len(fnChunk.code) {
 		if interp.execution != nil {
 			interp.execution.Instructions++
-			if err := binding.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
+			if err := invoke.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
 				interp.restoreFrame()
 				return vm.EncodeInt(0), 0, nil, nil, err
 			}
@@ -785,8 +785,8 @@ func cloneValues(values []vm.Value) []vm.Value {
 }
 
 // ExecuteFunction runs a specific function chunk with the given arguments for the requested stage.
-func (interp *Interpreter) ExecuteFunction(fnChunk *chunk, stage binding.InvocationStage, args []vm.Value) (vm.Value, error) {
-	result, _, _, _, err := interp.runUntilBoundary(fnChunk, 0, nil, nil, args, stage == binding.InvocationStageNext, false)
+func (interp *Interpreter) ExecuteFunction(fnChunk *chunk, stage invoke.InvocationStage, args []vm.Value) (vm.Value, error) {
+	result, _, _, _, err := interp.runUntilBoundary(fnChunk, 0, nil, nil, args, stage == invoke.InvocationStageNext, false)
 	return result, err
 }
 
@@ -798,7 +798,7 @@ func (interp *Interpreter) logicalStack(current diagnostics.Frame) []diagnostics
 		if frame.function == "" {
 			continue
 		}
-		stack = append(stack, diagnostics.Frame{Callable: frame.function, Stage: string(binding.InvocationStageUnary)})
+		stack = append(stack, diagnostics.Frame{Callable: frame.function, Stage: string(invoke.InvocationStageUnary)})
 	}
 	return stack
 }
@@ -902,7 +902,7 @@ func (interp *Interpreter) errorValue(err *RuntimeError) vm.Value {
 func (interp *Interpreter) invokeNative(callable string, args []vm.Value) (vm.Value, bool, error) {
 	if interp.execution != nil {
 		interp.execution.HostCalls++
-		if err := binding.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
+		if err := invoke.CheckExecution(interp.ctx, interp.budget, interp.execution); err != nil {
 			return vm.EncodeInt(0), false, err
 		}
 	}

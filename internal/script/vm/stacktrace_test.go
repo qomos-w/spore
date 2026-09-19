@@ -100,10 +100,10 @@ func TestCallStackOverflow(t *testing.T) {
 }
 
 func TestRuntimeErrorFormat(t *testing.T) {
-		err := &runtimeError{
-			message:    "division by zero",
-			stackTrace: "  [0] div (math.spore:5)\n",
-		}
+	err := &runtimeError{
+		message:    "division by zero",
+		stackTrace: "  [0] div (math.spore:5)\n",
+	}
 	s := err.Error()
 	if !strings.Contains(s, "division by zero") {
 		t.Error("error string should contain message")

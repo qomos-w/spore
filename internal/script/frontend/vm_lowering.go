@@ -3,8 +3,7 @@ package frontend
 import (
 	"context"
 	"fmt"
-
-	"github.com/qomos-w/spore/binding"
+	"github.com/qomos-w/spore/invoke"
 )
 
 // CompiledVMLoweringBackend is the frontend-owned seam for VM backends that can
@@ -25,13 +24,13 @@ type VMLoweringBackend interface {
 // ScriptCallableAdapter. It stays inside the frontend-owned script execution seam
 // and does not restore a public evaluator API.
 type ScriptRuntimeBackend interface {
-	Evaluate(callable string, stage binding.InvocationStage, args []any) (any, error)
+	Evaluate(callable string, stage invoke.InvocationStage, args []any) (any, error)
 	Reset(callable string, args []any)
 }
 
 type ContextScriptRuntimeBackend interface {
 	ScriptRuntimeBackend
-	EvaluateContext(ctx context.Context, budget binding.ExecutionBudget, callable string, stage binding.InvocationStage, args []any) (any, error)
+	EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (any, error)
 }
 
 func runtimeBackendFromVMLowering(backend VMLoweringBackend) ScriptRuntimeBackend {

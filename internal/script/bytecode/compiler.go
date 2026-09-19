@@ -2,11 +2,11 @@ package bytecode
 
 import (
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"math"
 	"sort"
 	"strings"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/internal/script/frontend"
 	"github.com/qomos-w/spore/internal/script/vm"
@@ -3539,7 +3539,7 @@ func (c *compiler) nativeCallableNameForCall(e *frontend.CallExpr) (string, bool
 	return object.Value + "." + member.Member.Value, true
 }
 
-func (c *compiler) registerNativeCapability(desc binding.CapabilityDesc) {
+func (c *compiler) registerNativeCapability(desc invoke.CapabilityDesc) {
 	if desc.Name == "" {
 		return
 	}
@@ -4564,7 +4564,7 @@ func (c *compiler) registerFunctions(v *vm.VM, interp *Interpreter) {
 		capturedInterp := interp
 
 		body := vm.NewBytecodeFunctionBody(func(v *vm.VM, args []vm.Value) vm.Value {
-			result, err := capturedInterp.ExecuteFunction(capturedChunk, binding.InvocationStageUnary, args)
+			result, err := capturedInterp.ExecuteFunction(capturedChunk, invoke.InvocationStageUnary, args)
 			if err != nil {
 				v.Panic(fmt.Sprintf("runtime error in %s: %s", name, err.Error()))
 				return vm.EncodeInt(0) // unreachable

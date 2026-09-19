@@ -1,9 +1,9 @@
 package bytecode
 
 import (
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/internal/script/frontend"
 	"github.com/qomos-w/spore/internal/script/vm"
+	"github.com/qomos-w/spore/invoke"
 )
 
 // Exported type aliases for cross-package access.
@@ -43,7 +43,7 @@ func (c *Compiler) RegisterClasses(v *vm.VM) {
 }
 
 // RegisterNativeCapability records a native capability namespace for compiler lowering.
-func (c *Compiler) RegisterNativeCapability(desc binding.CapabilityDesc) {
+func (c *Compiler) RegisterNativeCapability(desc invoke.CapabilityDesc) {
 	c.registerNativeCapability(desc)
 }
 

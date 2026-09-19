@@ -1,4 +1,4 @@
-package binding
+package invoke
 
 import "github.com/qomos-w/spore/diagnostics"
 

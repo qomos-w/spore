@@ -231,14 +231,14 @@ func TestSmallStringWithNullBytes(t *testing.T) {
 // stringByteAt powers for-in over strings in the bytecode layer. It must
 // work across all three string encodings (small, medium, large).
 func TestStringByteAtAllEncodings(t *testing.T) {
-	v := newVM(1 << 20, 256)
+	v := newVM(1<<20, 256)
 
 	cases := []struct {
 		name string
 		s    string
 	}{
-		{"small", "abcdef"},                 // inline small string
-		{"medium", "the quick brown fox"},   // medium string
+		{"small", "abcdef"},                  // inline small string
+		{"medium", "the quick brown fox"},    // medium string
 		{"large", strings.Repeat("ab", 100)}, // large string
 	}
 	for _, tc := range cases {

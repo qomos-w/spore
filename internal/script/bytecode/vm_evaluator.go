@@ -3,12 +3,12 @@ package bytecode
 import (
 	"context"
 	"fmt"
+	"github.com/qomos-w/spore/invoke"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/internal/script/frontend"
 	"github.com/qomos-w/spore/internal/script/vm"
@@ -23,7 +23,7 @@ type VMEvaluator struct {
 	chunks             map[string]*Chunk
 	sessions           map[string]*streamSession
 	rootProviderID     int
-	nativeBinding      *binding.ScriptBinding
+	nativeBinding      invoke.ScriptSurface
 	hostInterfaces     HostInterfaceResolver
 	nativeCapabilities map[string]map[string]struct{}
 	nativeExecutables  map[string]*nativeExecutable
@@ -43,7 +43,7 @@ type VMEvaluator struct {
 	onVMReplaced []func(*vm.VM)
 	// execState is the per-call execution-budget counter, reused across
 	// calls (zeroed at the start of every EvaluateContext).
-	execState binding.ExecutionState
+	execState invoke.ExecutionState
 }
 
 // Default VM memory budget applied when a VMEvaluator is built without an
@@ -75,7 +75,7 @@ func resolveVMBudget(bytes, slots int) (int, int) {
 }
 
 type nativeExecutable struct {
-	adapter binding.ExecutableAdapter
+	adapter invoke.ExecutableAdapter
 }
 
 type nativeImportedValue struct {
@@ -315,11 +315,11 @@ func (e *VMEvaluator) AllowNativeNamespace(namespace string) {
 
 // Evaluate executes a compiled function by name for the requested invocation stage,
 // converting between []any and vm.Value.
-func (e *VMEvaluator) Evaluate(callable string, stage binding.InvocationStage, args []any) (any, error) {
-	return e.EvaluateContext(context.Background(), binding.ExecutionBudget{}, callable, stage, args)
+func (e *VMEvaluator) Evaluate(callable string, stage invoke.InvocationStage, args []any) (any, error) {
+	return e.EvaluateContext(context.Background(), invoke.ExecutionBudget{}, callable, stage, args)
 }
 
-func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget binding.ExecutionBudget, callable string, stage binding.InvocationStage, args []any) (any, error) {
+func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (any, error) {
 	if e == nil {
 		return nil, fmt.Errorf("callable %q has no evaluator", callable)
 	}
@@ -345,16 +345,16 @@ func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget binding.Execut
 	// Reuse the evaluator's execution state: zeroed per call, so budget
 	// accounting starts fresh exactly like a freshly allocated state.
 	state := &e.execState
-	*state = binding.ExecutionState{}
-	if err := binding.CheckExecution(ctx, budget, state); err != nil {
+	*state = invoke.ExecutionState{}
+	if err := invoke.CheckExecution(ctx, budget, state); err != nil {
 		return nil, err
 	}
 	e.interp.ctx = ctx
 	e.interp.budget = budget
 	e.interp.execution = state
-	if stage == binding.InvocationStageNext {
+	if stage == invoke.InvocationStageNext {
 		result, callErr = e.executeNext(callable, chunk, vmArgs)
-	} else if stage == binding.InvocationStageFinal {
+	} else if stage == invoke.InvocationStageFinal {
 		result, callErr = e.executeFinal(callable, chunk, vmArgs)
 	} else {
 		result, callErr = e.interp.ExecuteFunction(chunk, stage, vmArgs)
@@ -380,7 +380,7 @@ func (e *VMEvaluator) EvaluateUnaryInt(callable string, arg int) (int64, error) 
 	if !ok {
 		return 0, fmt.Errorf("callable %q not found in compiled chunks", callable)
 	}
-	result, err := e.interp.ExecuteFunction(chunk, binding.InvocationStageUnary, []vm.Value{vm.EncodeInt(int32(arg))})
+	result, err := e.interp.ExecuteFunction(chunk, invoke.InvocationStageUnary, []vm.Value{vm.EncodeInt(int32(arg))})
 	if err != nil {
 		if rtErr, ok := err.(*RuntimeError); ok {
 			rtErr.Callable = callable
@@ -433,7 +433,7 @@ func (e *VMEvaluator) CancelAllStreams() {
 	}
 }
 
-func newStreamCancelledError(callable string, stage binding.InvocationStage) *RuntimeError {
+func newStreamCancelledError(callable string, stage invoke.InvocationStage) *RuntimeError {
 	return &RuntimeError{
 		Code:     "stream_cancelled",
 		Category: diagnostics.CategoryStream,
@@ -444,7 +444,7 @@ func newStreamCancelledError(callable string, stage binding.InvocationStage) *Ru
 	}
 }
 
-func (e *VMEvaluator) SetNativeBinding(sb *binding.ScriptBinding) {
+func (e *VMEvaluator) SetNativeBinding(sb invoke.ScriptSurface) {
 	if e == nil {
 		return
 	}
@@ -466,14 +466,14 @@ func (e *VMEvaluator) SetHostInterfaceResolver(resolver HostInterfaceResolver) {
 	e.hostInterfaces = resolver
 }
 
-func (e *VMEvaluator) cacheNativeExecutables(sb *binding.ScriptBinding) {
-	if e == nil || sb == nil || sb.Executors == nil {
+func (e *VMEvaluator) cacheNativeExecutables(sb invoke.ScriptSurface) {
+	if e == nil || sb == nil || sb.ExecutorSource() == nil {
 		return
 	}
 	if e.nativeExecutables == nil {
 		e.nativeExecutables = make(map[string]*nativeExecutable)
 	}
-	sb.Executors.ForEachAdapter(func(name string, adapter binding.ExecutableAdapter) bool {
+	sb.ExecutorSource().ForEachAdapter(func(name string, adapter invoke.ExecutableAdapter) bool {
 		e.nativeExecutables[name] = &nativeExecutable{adapter: adapter}
 		return true
 	})
@@ -488,10 +488,10 @@ func (e *VMEvaluator) lookupNativeExecutable(callable string) (*nativeExecutable
 			return entry, true
 		}
 	}
-	if e.nativeBinding == nil || e.nativeBinding.Executors == nil {
+	if e.nativeBinding == nil || e.nativeBinding.ExecutorSource() == nil {
 		return nil, false
 	}
-	adapter, ok := e.nativeBinding.Executors.Lookup(callable)
+	adapter, ok := e.nativeBinding.ExecutorSource().Lookup(callable)
 	if !ok {
 		return nil, false
 	}
@@ -503,7 +503,7 @@ func (e *VMEvaluator) lookupNativeExecutable(callable string) (*nativeExecutable
 	return entry, true
 }
 
-func (e *VMEvaluator) registerNativeCapability(desc binding.CapabilityDesc) {
+func (e *VMEvaluator) registerNativeCapability(desc invoke.CapabilityDesc) {
 	if e == nil || desc.Name == "" {
 		return
 	}
@@ -536,9 +536,9 @@ func (e *VMEvaluator) Invoke(ctx context.Context, callable string, args []any) (
 	if e == nil || e.nativeBinding == nil {
 		return nil, nil
 	}
-	outcome, err := e.nativeBinding.Invoke(binding.InvocationRequest{
+	outcome, err := e.nativeBinding.Invoke(invoke.InvocationRequest{
 		Callable: callable,
-		Stage:    binding.InvocationStageUnary,
+		Stage:    invoke.InvocationStageUnary,
 		Args:     args,
 		Context:  ctx,
 	})
@@ -569,12 +569,12 @@ func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args 
 	for i, arg := range args {
 		payload[i] = vmValueToAnyWithHost(e.hostInterfaces, e.vm_, arg)
 	}
-	if err := binding.CheckExecution(ctx, binding.ExecutionBudget{}, nil); err != nil {
+	if err := invoke.CheckExecution(ctx, invoke.ExecutionBudget{}, nil); err != nil {
 		return vm.EncodeInt(0), true, err
 	}
-	outcome, err := entry.adapter.Invoke(binding.InvocationRequest{
+	outcome, err := entry.adapter.Invoke(invoke.InvocationRequest{
 		Callable: callable,
-		Stage:    binding.InvocationStageUnary,
+		Stage:    invoke.InvocationStageUnary,
 		Args:     payload,
 		Context:  ctx,
 	})
@@ -583,7 +583,7 @@ func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args 
 	}
 
 	// Handle error outcome first.
-	if outcome.Result.Kind == binding.InvocationResultError {
+	if outcome.Result.Kind == invoke.InvocationResultError {
 		if outcome.Result.Error == nil {
 			return vm.EncodeInt(0), true, fmt.Errorf("native callable %q failed", callable)
 		}
@@ -671,8 +671,8 @@ func (e *VMEvaluator) mapToVMStruct(m map[string]any) (vm.Value, bool) {
 	return vm.EncodeInt(0), false
 }
 
-func projectInvocationOutcome(callable string, outcome binding.InvocationOutcome) (any, error) {
-	if outcome.Result.Kind == binding.InvocationResultError {
+func projectInvocationOutcome(callable string, outcome invoke.InvocationOutcome) (any, error) {
+	if outcome.Result.Kind == invoke.InvocationResultError {
 		if outcome.Result.Error == nil {
 			return nil, fmt.Errorf("native callable %q failed", callable)
 		}
@@ -690,10 +690,10 @@ func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value
 	if ok {
 		if state.cancelled {
 			delete(e.sessions, key)
-			return vm.EncodeInt(0), newStreamCancelledError(callable, binding.InvocationStageNext)
+			return vm.EncodeInt(0), newStreamCancelledError(callable, invoke.InvocationStageNext)
 		}
 		if state.exhausted || state.ip >= len(chunk.code) {
-			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(binding.InvocationStageNext)}}}
+			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(invoke.InvocationStageNext)}}}
 		}
 		result, ip, stack, locals, err := e.interp.runUntilBoundary(chunk, state.ip, cloneVMValues(state.stack), cloneVMValues(state.locals), nil, true, true)
 		if err != nil {
@@ -703,7 +703,7 @@ func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value
 		if ip >= len(chunk.code) {
 			delete(e.sessions, key)
 			e.sessions[key] = &streamSession{args: cloneVMValues(state.args), ip: len(chunk.code), exhausted: true}
-			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(binding.InvocationStageNext)}}}
+			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(invoke.InvocationStageNext)}}}
 		}
 		e.sessions[key] = &streamSession{args: cloneVMValues(state.args), ip: ip, stack: cloneVMValues(stack), locals: cloneVMValues(locals)}
 		return result, nil
@@ -713,7 +713,7 @@ func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value
 		return vm.EncodeInt(0), err
 	}
 	if ip >= len(chunk.code) {
-		return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(binding.InvocationStageNext)}}}
+		return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/next", Message: "stream exhausted before next yield", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(invoke.InvocationStageNext)}}}
 	}
 	e.sessions[key] = &streamSession{args: cloneVMValues(args), ip: ip, stack: cloneVMValues(stack), locals: cloneVMValues(locals)}
 	return result, nil
@@ -724,16 +724,16 @@ func (e *VMEvaluator) executeFinal(callable string, chunk *Chunk, args []vm.Valu
 	if state, ok := e.sessions[key]; ok {
 		if state.cancelled {
 			delete(e.sessions, key)
-			return vm.EncodeInt(0), newStreamCancelledError(callable, binding.InvocationStageFinal)
+			return vm.EncodeInt(0), newStreamCancelledError(callable, invoke.InvocationStageFinal)
 		}
 		if state.exhausted || state.ip >= len(chunk.code) {
-			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/final", Message: "stream exhausted before final result", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(binding.InvocationStageFinal)}}}
+			return vm.EncodeInt(0), &RuntimeError{Code: "stream_exhausted", Category: diagnostics.CategoryStream, Callable: callable, Path: "stream/final", Message: "stream exhausted before final result", Stack: []diagnostics.Frame{{Callable: callable, Stage: string(invoke.InvocationStageFinal)}}}
 		}
 		result, err := e.interp.ResumeUntilFinal(chunk, state.ip, cloneVMValues(state.stack), cloneVMValues(state.locals))
 		e.sessions[key] = &streamSession{args: cloneVMValues(state.args), ip: len(chunk.code), exhausted: true}
 		return result, err
 	}
-	result, err := e.interp.ExecuteFunction(chunk, binding.InvocationStageFinal, args)
+	result, err := e.interp.ExecuteFunction(chunk, invoke.InvocationStageFinal, args)
 	if err != nil {
 		return vm.EncodeInt(0), err
 	}
@@ -1052,7 +1052,7 @@ func projectNativeResult(v any) any {
 			if !field.IsExported() {
 				continue
 			}
-			name := binding.JSONTagName(field)
+			name := invoke.JSONTagName(field)
 			if name == "-" {
 				continue
 			}

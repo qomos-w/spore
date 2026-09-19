@@ -33,28 +33,28 @@ type (
 )
 
 type (
-	IntLiteral    = intLiteral
-	FloatLiteral  = floatLiteral
-	StringLiteral = stringLiteral
-	BoolLiteral   = boolLiteral
-	NullLiteral   = nullLiteral
-	IdentExpr     = identExpr
-	Ident         = ident
-	BinaryExpr    = binaryExpr
-	UnaryExpr     = unaryExpr
-	CallExpr      = callExpr
-	MemberExpr    = memberExpr
-	IndexExpr     = indexExpr
-	AssignExpr    = assignExpr
-	TypeCheckExpr = typeCheckExpr
-	TypeCastExpr  = typeCastExpr
-	ThisExpr      = thisExpr
-	ArrayLiteral  = arrayLiteral
-	MapLiteral    = mapLiteral
-	NewExpr       = newExpr
-	StructLiteral = structLiteral
-	SuperExpr     = superExpr
-	LambdaExpr    = lambdaExpr
+	IntLiteral        = intLiteral
+	FloatLiteral      = floatLiteral
+	StringLiteral     = stringLiteral
+	BoolLiteral       = boolLiteral
+	NullLiteral       = nullLiteral
+	IdentExpr         = identExpr
+	Ident             = ident
+	BinaryExpr        = binaryExpr
+	UnaryExpr         = unaryExpr
+	CallExpr          = callExpr
+	MemberExpr        = memberExpr
+	IndexExpr         = indexExpr
+	AssignExpr        = assignExpr
+	TypeCheckExpr     = typeCheckExpr
+	TypeCastExpr      = typeCastExpr
+	ThisExpr          = thisExpr
+	ArrayLiteral      = arrayLiteral
+	MapLiteral        = mapLiteral
+	NewExpr           = newExpr
+	StructLiteral     = structLiteral
+	SuperExpr         = superExpr
+	LambdaExpr        = lambdaExpr
 	NullCoalesceExpr  = nullCoalesceExpr
 	OptionalChainExpr = optionalChainExpr
 )
