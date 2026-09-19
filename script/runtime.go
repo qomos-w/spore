@@ -55,7 +55,6 @@ import (
 	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/internal/script/bytecode"
 	"github.com/qomos-w/spore/internal/script/frontend"
-	"github.com/qomos-w/spore/internal/script/vm"
 )
 
 // ErrRuntimeAlreadyLoaded is returned by LoadModule/LoadSource when a root
@@ -67,30 +66,20 @@ var ErrRuntimeAlreadyLoaded = errors.New("runtime already has root module loaded
 
 // Runtime is Spore's public host-facing facade for script/module execution and embedding.
 type Runtime struct {
-	binding               *binding.ScriptBinding
-	frontend              *frontend.Frontend
-	evaluator             *bytecode.VMEvaluator
-	rootModule            string
-	boundFuncs            map[string]BoundFunction
-	boundValues           map[string]BoundValue
-	boundObjects          map[string]BoundStruct
-	boundInterfaces       map[string]BoundInterface
-	boundTypeAliases      map[string]BoundTypeAlias
-	pendingNamespaces     map[string]*binding.CapabilityBuilder
-	bindingsCommitted     bool
-	moduleResolver        ModuleResolver
-	closed                bool
-	hostInterfaceClasses  map[string]hostInterfaceClass
-	hostInterfaceObjects  map[uint64]hostInterfaceObject
-	hostInterfaceHandles  map[vm.Handle]uint64
-	hostInterfaceBindings map[hostInterfaceBindingKey]uint64
-	nextHostInterfaceID   uint64
-	// hostIfaceRootProviderVM is the VM on which hostIfaceRootProviderID is
-	// registered. Tracked by pointer so the provider is re-registered when the
-	// execution VM is (re)created — the proxy objects allocated via CreateObject
-	// are not otherwise GC-rooted and are reclaimed under sustained allocation.
-	hostIfaceRootProviderVM  *vm.VM
-	hostIfaceRootProviderID  int
+	binding           *binding.ScriptBinding
+	frontend          *frontend.Frontend
+	evaluator         *bytecode.VMEvaluator
+	rootModule        string
+	boundFuncs        map[string]BoundFunction
+	boundValues       map[string]BoundValue
+	boundObjects      map[string]BoundStruct
+	boundInterfaces   map[string]BoundInterface
+	boundTypeAliases  map[string]BoundTypeAlias
+	pendingNamespaces map[string]*binding.CapabilityBuilder
+	bindingsCommitted bool
+	moduleResolver    ModuleResolver
+	closed            bool
+	hostIface         hostInterfaceLedger
 	// vmHeapBytes / vmHeapSlots remember the configured VM memory budget
 	// across Clone/Reset so the rebuilt evaluator keeps its memory cap.
 	// Zero means "use the default budget" — the same opt-in semantics as
@@ -154,21 +143,18 @@ func NewRuntimeWith(opts RuntimeOptions) (*Runtime, error) {
 	eval.SetNativeBinding(sb)
 	fe.SetVMCompileHook(eval)
 	rt := &Runtime{
-		binding:               sb,
-		frontend:              fe,
-		evaluator:             eval,
-		boundFuncs:            make(map[string]BoundFunction),
-		boundValues:           make(map[string]BoundValue),
-		boundObjects:          make(map[string]BoundStruct),
-		boundInterfaces:       make(map[string]BoundInterface),
-		boundTypeAliases:      make(map[string]BoundTypeAlias),
-		pendingNamespaces:     make(map[string]*binding.CapabilityBuilder),
-		hostInterfaceClasses:  make(map[string]hostInterfaceClass),
-		hostInterfaceObjects:  make(map[uint64]hostInterfaceObject),
-		hostInterfaceHandles:  make(map[vm.Handle]uint64),
-		hostInterfaceBindings: make(map[hostInterfaceBindingKey]uint64),
-		vmHeapBytes:           opts.VMHeapBytes,
-		vmHeapSlots:           opts.VMHeapSlots,
+		binding:           sb,
+		frontend:          fe,
+		evaluator:         eval,
+		boundFuncs:        make(map[string]BoundFunction),
+		boundValues:       make(map[string]BoundValue),
+		boundObjects:      make(map[string]BoundStruct),
+		boundInterfaces:   make(map[string]BoundInterface),
+		boundTypeAliases:  make(map[string]BoundTypeAlias),
+		pendingNamespaces: make(map[string]*binding.CapabilityBuilder),
+		hostIface:         newHostInterfaceLedger(),
+		vmHeapBytes:       opts.VMHeapBytes,
+		vmHeapSlots:       opts.VMHeapSlots,
 	}
 	rt.attachHostIfaceRoots(eval)
 	eval.SetHostInterfaceResolver(rt)

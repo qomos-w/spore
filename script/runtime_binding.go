@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/qomos-w/spore/binding"
@@ -216,20 +215,18 @@ func (rt *Runtime) BindInterfaceObject(namespace, name string, desc schema.Inter
 		return err
 	}
 	key := hostInterfaceBindingKey{Namespace: namespace, Name: name}
-	if existingID, ok := rt.hostInterfaceBindings[key]; ok {
-		delete(rt.hostInterfaceObjects, existingID)
+	if existingID, ok := rt.hostIface.bindings[key]; ok {
+		rt.hostIface.deleteObject(existingID)
 	}
-	objID := atomic.AddUint64(&rt.nextHostInterfaceID, 1)
-	rt.hostInterfaceBindings[key] = objID
-	rt.hostInterfaceObjects[objID] = hostInterfaceObject{
+	objID := rt.hostIface.allocID()
+	rt.hostIface.bindings[key] = objID
+	rt.hostIface.objects[objID] = hostInterfaceObject{
 		ID:             objID,
 		Namespace:      namespace,
 		Name:           name,
 		InterfaceDesc:  schema.CloneInterfaceDesc(desc),
 		Target:         target,
 		ProxyClassName: hostInterfaceProxyClassName(namespace, name),
-		Handle:         vm.InvalidHandle,
-		Pending:        true,
 	}
 	return rt.bindPendingValue(namespace, name, target)
 }
@@ -637,12 +634,11 @@ func (rt *Runtime) commitPendingBindings() error {
 // finalizePendingHostInterfaces registers proxy classes and allocates object
 // handles for all pending host interface bindings on the current execution VM.
 // Must be called after CompileLoweredProgram so that rt.evaluator.VM() is the
-// execution VM, not a stale pre-compile instance.
+// execution VM, not a stale pre-compile instance. The pending set is snapshotted
+// first so that registration (which may adopt or mint records) cannot affect the
+// iteration.
 func (rt *Runtime) finalizePendingHostInterfaces() error {
-	for _, obj := range rt.hostInterfaceObjects {
-		if !obj.Pending {
-			continue
-		}
+	for _, obj := range rt.hostIface.pending() {
 		if _, err := rt.registerHostInterfaceObject(obj.Namespace, obj.Name, obj.InterfaceDesc, obj.Target); err != nil {
 			return err
 		}
