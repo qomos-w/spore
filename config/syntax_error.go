@@ -170,13 +170,13 @@ func (e *syntaxErrors) SyntaxErrors() []*SyntaxError {
 func (e *syntaxErrors) DiagnosticCode() string { return CodeConfigParseError }
 
 func (e *syntaxErrors) DiagnosticCategory() diagnostics.Category {
-	return CategoryForCode(CodeConfigParseError)
+	return categoryForCode(CodeConfigParseError)
 }
 
 func (e *syntaxErrors) DiagnosticPath() string { return "config" }
 
 func (e *syntaxErrors) DiagnosticHint() string {
-	return HintForCode(CodeConfigParseError)
+	return hintForCode(CodeConfigParseError)
 }
 
 // The methods below satisfy the interfaces diagnostics.FromError probes, so a
@@ -190,7 +190,7 @@ func (e *SyntaxError) DiagnosticCode() string {
 }
 
 func (e *SyntaxError) DiagnosticCategory() diagnostics.Category {
-	return CategoryForCode(e.DiagnosticCode())
+	return categoryForCode(e.DiagnosticCode())
 }
 
 func (e *SyntaxError) DiagnosticSpan() diagnostics.Span {
@@ -224,20 +224,20 @@ func (e *SyntaxError) DiagnosticHint() string {
 	if e.Hint != "" {
 		return e.Hint
 	}
-	return HintForCode(e.DiagnosticCode())
+	return hintForCode(e.DiagnosticCode())
 }
 
-// CategoryForCode returns the diagnostics category a config code is registered
+// categoryForCode returns the diagnostics category a config code is registered
 // under, falling back to the schema layer for an unregistered or empty code.
-func CategoryForCode(code string) diagnostics.Category {
+func categoryForCode(code string) diagnostics.Category {
 	if info, ok := diagnostics.LookupCode(code); ok && info.Category != "" {
 		return info.Category
 	}
 	return diagnostics.CategorySchema
 }
 
-// HintForCode returns the repair hint registered for a config code.
-func HintForCode(code string) string {
+// hintForCode returns the repair hint registered for a config code.
+func hintForCode(code string) string {
 	if info, ok := diagnostics.LookupCode(code); ok {
 		return info.Hint
 	}

@@ -59,10 +59,7 @@ func (d Diagnostic) DiagnosticCode() string { return d.Code }
 // the code registry is authoritative; CategorySchema is the documented
 // fallback for an unregistered or empty code.
 func (d Diagnostic) DiagnosticCategory() diagnostics.Category {
-	if info, ok := diagnostics.LookupCode(d.Code); ok && info.Category != "" {
-		return info.Category
-	}
-	return diagnostics.CategorySchema
+	return categoryForCode(d.Code)
 }
 
 // DiagnosticSeverity reports the config-side severity ("error", "warning",
@@ -100,10 +97,7 @@ func (d Diagnostic) DiagnosticHint() string {
 	if d.Hint != "" {
 		return d.Hint
 	}
-	if info, ok := diagnostics.LookupCode(d.Code); ok {
-		return info.Hint
-	}
-	return ""
+	return hintForCode(d.Code)
 }
 
 // Compile-time guarantees that Diagnostic interoperates with the diagnostics
