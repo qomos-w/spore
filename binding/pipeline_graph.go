@@ -57,8 +57,11 @@ func BuildPipelineGraph(desc PipelineDesc) PipelineGraph {
 		if from == "" || to == "" || from == to {
 			return
 		}
-		// Deduplicate by (from, to) regardless of kind — one edge per node pair.
-		key := from + "|" + to
+		// Deduplicate per semantic edge: a single (from, to) node pair may legitimately
+		// carry both a depends_on edge and an input_ref edge, so the kind is part of the
+		// key. This keeps each semantic edge set complete while still collapsing exact
+		// duplicates of the same kind.
+		key := kind + "|" + from + "|" + to
 		if edgeSet[key] {
 			return
 		}
