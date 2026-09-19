@@ -35,6 +35,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/schema"
 )
 
@@ -627,28 +628,13 @@ func mapType(td schema.TypeDesc) (string, error) {
 	return "", fmt.Errorf("unsupported type kind %v", td.Kind)
 }
 
+// mapScalar maps a Spore scalar name to the Go type go-types emits for it,
+// resolving through the shared scalar table in internal/gen/common. Unknown
+// names are an error: emitting a bogus Go type would only surface at the
+// consumer's compile time.
 func mapScalar(name string) (string, error) {
-	switch name {
-	case "string":
-		return "string", nil
-	case "bool":
-		return "bool", nil
-	case "int", "int32":
-		return "int32", nil
-	case "long", "int64":
-		return "int64", nil
-	case "uint", "uint32":
-		return "uint32", nil
-	case "ulong", "uint64":
-		return "uint64", nil
-	case "float":
-		return "float32", nil
-	case "double":
-		return "float64", nil
-	case "any":
-		return "any", nil
-	case "bytes":
-		return "[]byte", nil
+	if gt, ok := common.GoTypesScalar(name); ok {
+		return gt, nil
 	}
 	return "", fmt.Errorf("unknown scalar %q", name)
 }

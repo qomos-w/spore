@@ -27,36 +27,30 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/internal/gen/manifest"
 	"github.com/qomos-w/spore/internal/gen/ts"
 	tsclient "github.com/qomos-w/spore/internal/gen/ts-client"
 )
 
 func main() {
-	var (
-		inPath        = flag.String("in", "-", `manifest path; "-" reads stdin`)
-		outDir        = flag.String("out", "", "output directory (required)")
-		visibilityCSV = flag.String("visibility", "public", "comma-separated visibilities to include: internal,public,admin,diagnostic")
-		header        = flag.String("header", "// AUTO-GENERATED — DO NOT EDIT", "comment header prepended to every generated file")
-	)
+	flags := common.RegisterManifestFlags(flag.CommandLine, false)
 	flag.Parse()
 
-	if *outDir == "" {
+	if flags.Out == "" {
 		fmt.Fprintln(os.Stderr, "spore-gen-ts-client: --out is required")
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	visibilities, err := manifest.ParseVisibilities(*visibilityCSV)
+	visibilities, err := manifest.ParseVisibilities(flags.Visibility)
 	if err != nil {
 		fail(err)
 	}
 
-	raw, err := readInput(*inPath)
+	raw, err := common.ReadInput(flags.In)
 	if err != nil {
 		fail(fmt.Errorf("read manifest: %w", err))
 	}
@@ -72,29 +66,16 @@ func main() {
 
 	files, err := tsclient.Generate(callables, ts.Options{
 		Visibilities: visibilities,
-		Header:       *header,
+		Header:       flags.Header,
 	})
 	if err != nil {
 		fail(fmt.Errorf("generate: %w", err))
 	}
 
-	for relPath, content := range files {
-		full := filepath.Join(*outDir, relPath)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			fail(fmt.Errorf("mkdir %s: %w", full, err))
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			fail(fmt.Errorf("write %s: %w", full, err))
-		}
+	if err := common.WriteFiles(flags.Out, files); err != nil {
+		fail(err)
 	}
-	fmt.Fprintf(os.Stderr, "spore-gen-ts-client: wrote %d file(s) to %s\n", len(files), *outDir)
-}
-
-func readInput(path string) ([]byte, error) {
-	if path == "-" {
-		return io.ReadAll(os.Stdin)
-	}
-	return os.ReadFile(path)
+	fmt.Fprintf(os.Stderr, "spore-gen-ts-client: wrote %d file(s) to %s\n", len(files), flags.Out)
 }
 
 func fail(err error) {

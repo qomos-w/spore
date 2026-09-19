@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/internal/gen/ts"
 	"github.com/qomos-w/spore/schema"
 )
@@ -181,45 +182,18 @@ func renderStructTypeRef(t schema.TypeDesc) (string, error) {
 }
 
 // renderScalarGoType maps a spore scalar TypeDesc into the Go type the
-// dispatcher uses for its `payload[...].(<type>)` cast. Only scalar
-// kinds are supported in the MVP; the codegen errors out for nested
-// struct / array / map fields rather than emitting unsafe code.
+// dispatcher uses for its `payload[...].(<type>)` cast, resolving through the
+// shared scalar table in internal/gen/common. Only scalar kinds are supported
+// in the MVP; the codegen errors out for nested struct / array / map fields
+// rather than emitting unsafe code.
 func renderScalarGoType(t schema.TypeDesc) (string, error) {
 	if t.Kind != schema.TypeKindScalar {
 		return "", fmt.Errorf("unsupported field kind %q (only scalar fields supported in goserver MVP)", t.Kind)
 	}
-	switch t.Name {
-	case "bool":
-		return "bool", nil
-	case "string":
-		return "string", nil
-	case "int":
-		return "int", nil
-	case "uint":
-		return "uint", nil
-	case "byte", "int8":
-		return "int8", nil
-	case "short", "int16":
-		return "int16", nil
-	case "int32":
-		return "int32", nil
-	case "long", "int64":
-		return "int64", nil
-	case "ushort", "uint16":
-		return "uint16", nil
-	case "uint32":
-		return "uint32", nil
-	case "ulong", "uint64":
-		return "uint64", nil
-	case "float", "float32":
-		return "float32", nil
-	case "double", "float64":
-		return "float64", nil
-	case "bytes":
-		return "[]byte", nil
-	default:
-		return "", fmt.Errorf("unsupported scalar %q", t.Name)
+	if gt, ok := common.GoServerScalar(t.Name); ok {
+		return gt, nil
 	}
+	return "", fmt.Errorf("unsupported scalar %q", t.Name)
 }
 
 // lookupSchema resolves a callable's TypeDesc reference against the

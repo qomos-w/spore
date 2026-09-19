@@ -28,41 +28,34 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	goserver "github.com/qomos-w/spore/internal/gen/go-server"
 	"github.com/qomos-w/spore/internal/gen/manifest"
 )
 
 func main() {
-	var (
-		inPath        = flag.String("in", "-", `manifest path; "-" reads stdin`)
-		outDir        = flag.String("out", "", "output directory (required)")
-		pkgName       = flag.String("package", "", "Go package declaration written into every generated file (required)")
-		visibilityCSV = flag.String("visibility", "public", "comma-separated visibilities to include: internal,public,admin,diagnostic")
-		header        = flag.String("header", "// AUTO-GENERATED — DO NOT EDIT", "comment header prepended to every generated file")
-	)
+	flags := common.RegisterManifestFlags(flag.CommandLine, true)
 	flag.Parse()
 
-	if *outDir == "" {
+	if flags.Out == "" {
 		fmt.Fprintln(os.Stderr, "spore-gen-go-server: --out is required")
 		flag.Usage()
 		os.Exit(2)
 	}
-	if *pkgName == "" {
+	if flags.Package == "" {
 		fmt.Fprintln(os.Stderr, "spore-gen-go-server: --package is required")
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	visibilities, err := manifest.ParseVisibilities(*visibilityCSV)
+	visibilities, err := manifest.ParseVisibilities(flags.Visibility)
 	if err != nil {
 		fail(err)
 	}
 
-	raw, err := readInput(*inPath)
+	raw, err := common.ReadInput(flags.In)
 	if err != nil {
 		fail(fmt.Errorf("read manifest: %w", err))
 	}
@@ -73,31 +66,18 @@ func main() {
 	}
 
 	files, err := goserver.Generate(schemas, callables, goserver.Options{
-		Package:      *pkgName,
+		Package:      flags.Package,
 		Visibilities: visibilities,
-		Header:       *header,
+		Header:       flags.Header,
 	})
 	if err != nil {
 		fail(fmt.Errorf("generate: %w", err))
 	}
 
-	for relPath, content := range files {
-		full := filepath.Join(*outDir, relPath)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			fail(fmt.Errorf("mkdir %s: %w", full, err))
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			fail(fmt.Errorf("write %s: %w", full, err))
-		}
+	if err := common.WriteFiles(flags.Out, files); err != nil {
+		fail(err)
 	}
-	fmt.Fprintf(os.Stderr, "spore-gen-go-server: wrote %d file(s) to %s\n", len(files), *outDir)
-}
-
-func readInput(path string) ([]byte, error) {
-	if path == "-" {
-		return io.ReadAll(os.Stdin)
-	}
-	return os.ReadFile(path)
+	fmt.Fprintf(os.Stderr, "spore-gen-go-server: wrote %d file(s) to %s\n", len(files), flags.Out)
 }
 
 func fail(err error) {

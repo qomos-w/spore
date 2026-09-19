@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/qomos-w/spore/internal/gen/common"
 	"github.com/qomos-w/spore/internal/gen/ts"
 	"github.com/qomos-w/spore/schema"
 )
@@ -229,27 +230,16 @@ func renderType(t schema.TypeDesc) string {
 	}
 }
 
-// renderScalar maps Spore scalar names to TypeScript equivalents.
-// Mirrors `internal/gen/ts/render.go::renderScalar`.
+// renderScalar maps Spore scalar names to TypeScript equivalents, resolving
+// through the shared scalar table in internal/gen/common (the same table
+// internal/gen/ts uses, so the two TypeScript surfaces cannot drift). Unknown
+// names pass through verbatim; the empty name renders as `unknown`.
 func renderScalar(name string) string {
-	switch name {
-	case "bool":
-		return "boolean"
-	case "byte", "short", "ushort", "int", "uint", "long", "ulong",
-		"float", "double", "int8", "int16", "int32", "int64",
-		"uint8", "uint16", "uint32", "uint64", "float32", "float64":
-		return "number"
-	case "string":
-		return "string"
-	case "bytes":
-		return "Uint8Array"
-	case "any":
+	if name == "" {
 		return "unknown"
-	case "null":
-		return "null"
-	case "":
-		return "unknown"
-	default:
-		return name
 	}
+	if out, ok := common.TSScalar(name); ok {
+		return out
+	}
+	return name
 }
