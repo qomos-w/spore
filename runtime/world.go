@@ -15,13 +15,21 @@ type WorldOption func(*World)
 
 const CodeEntityError = "entity_error"
 
-func init() {
-	diagnostics.RegisterCode(diagnostics.CodeInfo{
+// runtimeDiagnosticCodes is this package's diagnostic-code table; init()
+// registers it in order. Kept package-local so runtime stays autonomous.
+var runtimeDiagnosticCodes = []diagnostics.CodeInfo{
+	{
 		Code:        CodeEntityError,
 		Category:    diagnostics.CategoryRuntime,
 		Description: "Entity lifecycle or component access failed",
 		Hint:        "检查实体是否已创建且未被销毁，以及组件是否存在",
-	})
+	},
+}
+
+func init() {
+	for _, info := range runtimeDiagnosticCodes {
+		diagnostics.RegisterCode(info)
+	}
 }
 
 // WithSlot sets the runtime slot for CanonicalID generation.

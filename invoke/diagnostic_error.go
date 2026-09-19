@@ -28,15 +28,23 @@ const (
 	CodeUnsupportedCallableMode  = "unsupported_callable_mode"
 )
 
+// invokeDiagnosticCodes is this package's diagnostic-code table; init()
+// registers it in order. Kept package-local so invoke stays autonomous.
+var invokeDiagnosticCodes = []diagnostics.CodeInfo{
+	{Code: CodeInvalidArgumentCount, Category: diagnostics.CategoryContract, Description: "Callable received the wrong number of arguments", Hint: "调整参数数量：期望值见 expected，实际值见 actual"},
+	{Code: CodeNilArgument, Category: diagnostics.CategoryContract, Description: "Callable argument cannot be nil", Hint: "为该参数提供非 nil 值"},
+	{Code: CodeInvalidArgumentType, Category: diagnostics.CategoryContract, Description: "Callable argument type does not match schema", Hint: "将参数类型从 actual 调整为 expected"},
+	{Code: CodeInvalidInvocationStage, Category: diagnostics.CategoryContract, Description: "Invocation stage is not allowed for this callable", Hint: "改用 expected 指定的调用阶段"},
+	{Code: CodeMissingStreamNextSchema, Category: diagnostics.CategoryContract, Description: "Streaming callable is missing next schema", Hint: "为 streaming callable 补充 next schema"},
+	{Code: CodeMissingStreamFinalSchema, Category: diagnostics.CategoryContract, Description: "Streaming callable is missing final schema", Hint: "为 streaming callable 补充 final schema"},
+	{Code: CodeUnsupportedCallableMode, Category: diagnostics.CategoryContract, Description: "Callable mode is unsupported", Hint: "将 callable mode 改为 unary 或 streaming"},
+	{Code: schema.CodeMediaInlineTooLarge, Category: diagnostics.CategoryContract, Description: "Inline media data: URL exceeds the size limit", Hint: "改用 file: 或 https: 引用，或缩减 data: URL 至 1 MiB 以内"},
+}
+
 func init() {
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeInvalidArgumentCount, Category: diagnostics.CategoryContract, Description: "Callable received the wrong number of arguments", Hint: "调整参数数量：期望值见 expected，实际值见 actual"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeNilArgument, Category: diagnostics.CategoryContract, Description: "Callable argument cannot be nil", Hint: "为该参数提供非 nil 值"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeInvalidArgumentType, Category: diagnostics.CategoryContract, Description: "Callable argument type does not match schema", Hint: "将参数类型从 actual 调整为 expected"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeInvalidInvocationStage, Category: diagnostics.CategoryContract, Description: "Invocation stage is not allowed for this callable", Hint: "改用 expected 指定的调用阶段"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeMissingStreamNextSchema, Category: diagnostics.CategoryContract, Description: "Streaming callable is missing next schema", Hint: "为 streaming callable 补充 next schema"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeMissingStreamFinalSchema, Category: diagnostics.CategoryContract, Description: "Streaming callable is missing final schema", Hint: "为 streaming callable 补充 final schema"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeUnsupportedCallableMode, Category: diagnostics.CategoryContract, Description: "Callable mode is unsupported", Hint: "将 callable mode 改为 unary 或 streaming"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: schema.CodeMediaInlineTooLarge, Category: diagnostics.CategoryContract, Description: "Inline media data: URL exceeds the size limit", Hint: "改用 file: 或 https: 引用，或缩减 data: URL 至 1 MiB 以内"})
+	for _, info := range invokeDiagnosticCodes {
+		diagnostics.RegisterCode(info)
+	}
 }
 
 func (e *ContractError) Error() string {

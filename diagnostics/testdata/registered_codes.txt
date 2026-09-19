@@ -1,0 +1,123 @@
+array_index_out_of_range	runtime	Array index was outside array bounds	访问 array 前确认索引在 0 到 length-1 范围内
+array_literal_type_mismatch	schema	Array literal elements must share one type	将数组元素类型统一为 expected
+assign_imported_variable	schema	Attempted to assign to an imported variable	不要给 import 得到的变量重新赋值，改为写入本地变量
+binding_error	contract	Binding target does not match its schema descriptor	检查绑定目标对象的类型是否与 schema 描述符匹配
+break_in_defer	schema	break was used inside a defer body	移除 defer 块内的 break；defer 块不属于任何循环
+break_outside_loop	schema	break was used outside a loop	将 break 放入循环体内，或改用 return/条件分支
+callable_lowering_failed	schema	Callable lowering to schema failed	检查 callable 声明是否完整且类型可解析
+class_not_found	runtime	VM could not find a class descriptor	确认 class 已声明并被当前模块加载
+compile_error	schema	Bytecode compilation failed	检查 bytecode 编译错误列表并修正对应源代码
+config_equals_colon	schema	key = value instead of key: value	auto-normalized '=' to ':'
+config_format_rejected	schema	input format not recognized as config or JSON	use Spore config, JSON, or key=value syntax
+config_json_brackets	schema	JSON-style outer braces	auto-stripped outer { } braces
+config_json_quotes	schema	JSON-style quoted map keys	auto-removed quotes from map keys; use bare identifiers
+config_json_trailing_comma	schema	JSON-style trailing comma before } or ]	auto-removed trailing commas
+config_markdown_block	schema	config wrapped in markdown code block	auto-stripped markdown fencing
+config_missing_field	schema	required struct field missing from config	add the missing key to config
+config_parse_error	schema	config parse error	check syntax near the reported line
+config_too_many_corrections	schema	too many corrections applied, input may be too far from valid syntax	rewrite the config in Spore config or JSON syntax and retry
+config_type_mismatch	schema	config value type does not match struct field type	use the expected type shown in the diagnostic
+config_unknown_field	schema	config key not found in target struct	remove the unknown key or check spelling
+continue_in_defer	schema	continue was used inside a defer body	移除 defer 块内的 continue；defer 块不属于任何循环
+continue_outside_loop	schema	continue was used outside a loop	将 continue 放入循环体内
+cyclic_import	load	Module import cycle prevented symbol resolution	打破模块循环依赖，或仅在循环中保留类型导入
+decode_error	transport	Transport decoding failed	检查传输数据是否完整且版本兼容
+defer_in_defer	schema	defer was nested inside another defer body	移除嵌套的 defer；defer 块内不支持再注册 defer
+division_by_zero	runtime	Division by zero occurred	在除法前确保除数非零
+duplicate_enum_member	schema	Enum declared the same member name more than once	移除重复的 enum 成员名
+duplicate_enum_member_value	schema	Enum members shared the same underlying value	为 enum 成员指定互不相同的底层值
+duplicate_import_binding	load	Import binding collides with another imported or local name	为 import 使用不同 alias，避免和本地声明或其他 import 重名
+duplicate_struct_field	schema	Struct literal provided the same field more than once	在 struct 字面量中移除重复字段
+encode_error	transport	Transport encoding failed	检查待编码值是否符合 schema 类型要求
+entity_error	runtime	Entity lifecycle or component access failed	检查实体是否已创建且未被销毁，以及组件是否存在
+enum_not_registered	runtime	VM could not resolve an enum constant's runtime registration	确认 enum 已声明并被当前模块加载（registerEnums）
+enum_value_out_of_range	schema	Enum member explicit value exceeded the int range	将 enum 成员的显式赋值限制在 int32 范围内
+export_boundary_violation	schema	Export boundary uses a disallowed class type	将 export fun 边界类型改为 struct，而不是 class
+field_shadowing_disallowed	schema	Field shadowed an ancestor field	重命名当前类字段以避免与祖先字段同名
+function_type_arg_mismatch	schema	Call argument did not match the fun type signature	将调用实参类型改为与 fun 类型签名一致
+function_type_arity_mismatch	schema	Function-typed value used with a mismatched parameter count	使 lambda 参数个数与 fun 类型签名的参数个数一致
+function_type_mismatch	schema	Value assigned to a function-typed slot was not compatible	将赋值改为兼容的 lambda 或函数类型值
+function_type_param_mismatch	schema	Lambda parameter type did not match the fun type signature	将 lambda 参数类型改为与 fun 类型签名一致（或 any）
+function_type_return_mismatch	schema	Lambda return type did not match the fun type signature	将 lambda 返回类型改为与 fun 类型签名一致（或 any）
+global_index_out_of_bounds	runtime	VM global load index was out of bounds	检查全局变量是否已声明并成功编译
+inherit_non_open_class	schema	Class attempted to inherit from a non-open class	仅继承 open class，或移除 extends
+interface_method_missing	schema	Class was missing a required interface method	为 class 补充缺失的 interface 方法实现
+interface_signature_mismatch	schema	Class method signature did not satisfy an interface method	将实现方法的参数和返回类型改为与 interface 定义一致
+invalid_argument_count	contract	Callable received the wrong number of arguments	调整参数数量：期望值见 expected，实际值见 actual
+invalid_argument_type	contract	Callable argument type does not match schema	将参数类型从 actual 调整为 expected
+invalid_array_index_type	runtime	Array index value had an invalid runtime type	将 array 索引改为 int 类型
+invalid_capture_cell	runtime	A local slot or capture operand did not hold a capture cell	检查闭包捕获的变量是否已在声明后被 lambda 捕获
+invalid_constant	runtime	VM encountered an opcode operand with an unexpected constant kind	检查 bytecode 编译器和解释器版本是否匹配
+invalid_invocation_stage	contract	Invocation stage is not allowed for this callable	改用 expected 指定的调用阶段
+invalid_iterable_type	runtime	A for-in loop iterable was not an array, map, or string	for-in 的可迭代对象必须是 array、map 或 string 类型
+invalid_map_key_type	runtime	Map key value had an invalid runtime type	将 map key 改为 string 类型
+invalid_module_path	load	Module import path violates frontend path rules	使用相对逻辑模块名，避免空路径、绝对路径和 .. 遍历
+local_index_out_of_bounds	runtime	VM local load index was out of bounds	检查局部变量声明和编译后的 local 索引
+local_store_out_of_bounds	runtime	VM local store index was out of bounds	检查赋值目标是否在当前作用域内声明
+map_key_not_found	runtime	Requested map key was not present	访问前确认 map 中存在该 key，或提供默认值
+map_literal_type_mismatch	schema	Map literal keys and values must have consistent types	将 map 的键或值类型统一为 expected
+media_inline_too_large	contract	Inline media data: URL exceeds the size limit	改用 file: 或 https: 引用，或缩减 data: URL 至 1 MiB 以内
+method_visibility_narrowed	schema	Method shadowed an ancestor method with narrower visibility	不要以更窄的可见性覆盖祖先同名方法,或重命名当前方法
+missing_module_export	load	Requested symbol is not exported by the target module	将 import 名称改为目标模块已导出的符号，或在目标模块补充 export
+missing_module_resolver	load	Frontend attempted module linking without a configured resolver	在加载带 import 的源码前先调用 SetModuleResolver
+missing_stream_final_schema	contract	Streaming callable is missing final schema	为 streaming callable 补充 final schema
+missing_stream_next_schema	contract	Streaming callable is missing next schema	为 streaming callable 补充 next schema
+missing_struct_field	schema	Struct literal omitted a required field	为 struct 字面量补充缺失的必填字段
+module_not_found	load	Module resolver could not locate the requested module	检查 import 路径是否正确，并确认 resolver 可返回该模块源码
+modulo_by_zero	runtime	Modulo by zero occurred	在取模前确保除数非零
+multiple_diagnostics	runtime	Multiple diagnostics were produced	查看每个 cause 诊断并逐项修复
+native_call_failed	host	Native callable invocation failed	检查 native callable 的输入、返回值和底层错误 cause
+native_value_index_out_of_bounds	runtime	VM native value load index was out of bounds	检查 imported native value 槽位注册与编译结果是否一致
+nil_argument	contract	Callable argument cannot be nil	为该参数提供非 nil 值
+no_evaluator	host	Source-defined callable has no evaluator	为该 callable 提供 evaluator，或改为绑定到可执行实现
+override_method_not_found	schema	Override target method was not found on the parent class	确认父类中存在同名方法，或移除 override
+override_parent_method_not_open	schema	Parent method was not open for overriding	将父类方法标记为 open，或移除子类 override
+override_signature_mismatch	schema	Override method signature did not match the parent method	将 override 方法的参数和返回类型改为与父类方法一致
+override_visibility_narrowed	schema	Override method narrowed parent method visibility	不要让 override 方法以 private 收紧父类方法的可见性
+override_without_parent	schema	Override method was declared without a parent class	为 override 方法声明可继承的父类，或移除 override
+parent_class_not_found	schema	Declared parent class could not be found	确认父类名称正确且已在当前模块或导入模块中声明
+parse_error	load	Frontend parser rejected the source	检查报错位置附近的语法，并按 expected/actual 修正 token
+pipeline_dependency_cycle	schema	pipeline contains a circular dependency	remove circular dependencies so steps form a DAG
+pipeline_duplicate_step	schema	duplicate step name within a pipeline	rename the step or remove the duplicate
+pipeline_input_mismatch	schema	pipeline step input keys do not match callable parameters	check input keys against the callable's parameter schema
+pipeline_invalid_invoke_ref	schema	pipeline step invoke ref has invalid format	use format "<schemaID>:<callableName>" or "tool:<toolName>"
+pipeline_invalid_timeout	schema	pipeline step timeout is not a valid duration	use a valid Go duration string like "10m", "30s", "1h30m"
+pipeline_missing_invoke	schema	pipeline step is missing required invoke field	add invoke: "<schemaID>:<callableName>" to the step
+pipeline_unknown_callable	schema	pipeline step references a callable that does not exist in the schema	ensure the callable is declared in the capability schema
+pipeline_unknown_dependency	schema	pipeline step depends on a non-existent step	ensure the referenced step exists in the pipeline
+pipeline_unknown_schema	schema	pipeline step references a schema that does not exist in the registry	ensure the capability schema is registered
+private_field_access_denied	schema	Attempted to access a private field from an invalid context	仅在类内部访问 private 字段，或调整字段可见性
+private_method_access_denied	schema	Attempted to call a private method from an invalid context	仅在类内部调用 private 方法，或调整方法可见性
+return_in_defer	schema	return was used inside a defer body	移除 defer 块内的 return；defer 会在函数退出时自动执行
+stack_overflow	runtime	VM call stack exceeded its maximum depth	减少递归深度，或为递归添加终止条件
+stream_cancelled	stream	Stream session was cancelled before completion	取消后请使用全新 session 重启 stream，或在调用前先检查取消状态
+stream_exhausted	stream	Stream was exhausted before the requested stage	检查 stream 调用顺序，并在 next/final 之前确认流未结束
+stream_expr_body_unsupported	schema	Streaming callable cannot use expression body	将表达式函数体改为块体，并显式 yield/return
+stream_final_type_required	schema	Streaming callable must declare final return type	为 stream fun 补充最终返回类型
+stream_fun_requires_yield	schema	Streaming function must contain yield	在 stream fun 中至少添加一个 yield 表达式
+struct_field_type_mismatch	schema	Struct literal field type did not match the schema	将 struct 字段值类型从 actual 改为 expected
+struct_not_found	runtime	VM could not find a struct descriptor	确认 struct 已声明并被当前模块加载
+super_without_parent	schema	super was used without a parent class	仅在存在父类的 class 中使用 super
+type_alias_cycle	schema	Type alias definitions formed a cycle	打破 type alias 循环引用，使其最终指向具体类型
+type_cast_failed	runtime	A runtime type cast failed	将值类型从 actual 转为 expected，或先做类型检查
+undefined_closure	runtime	VM could not resolve a closure reference	确认闭包值未被拷贝到其解释器实例之外后调用
+undefined_function	runtime	VM attempted to call an undefined function	确认函数已声明、导入或注册到 VM
+undefined_imported_variable	schema	Referenced imported variable was not found	确认 import 的符号名称正确且已导出
+undefined_native_callable	runtime	VM attempted to call an undefined native callable	确认 native callable 已在绑定层注册
+undefined_variable	schema	Referenced variable was not defined	在使用前声明变量，或修正变量名
+unknown_enum	schema	Enum referenced in code was not declared	确认 enum 名称正确且已在当前模块或导入模块中声明
+unknown_enum_member	schema	Enum member referenced was not part of the enum's closed set	将成员名改为 enum 中已声明的成员
+unknown_interface	schema	Implemented interface could not be found	确认 interface 名称正确且已声明或导入
+unknown_opcode	runtime	VM encountered an unknown opcode	检查 bytecode 编译器和解释器版本是否匹配
+unknown_struct_field	schema	Struct literal referenced an unknown field	将字段名改为 struct 中已声明的字段
+unknown_struct_type	schema	Struct literal referenced a struct type that was not declared	将 struct 字面量类型名改为已声明的 struct，或在模块中先声明该 struct
+unknown_type_alias_target	schema	Type alias referenced an unknown target type	将 type alias 指向已声明的类型
+unsupported_callable_mode	contract	Callable mode is unsupported	将 callable mode 改为 unary 或 streaming
+unsupported_vm_argument_type	runtime	Host value cannot be converted to a VM argument	将参数改为 VM 支持的标量、数组、map 或结构体类型
+value_out_of_range	runtime	A value exceeded the range of its target type	改用更宽的类型（如 long/double）或缩小数值范围
+yield_disallowed_in_try	schema	yield was used inside a try block	将易错片段移入辅助 fun 并 yield 其结果；catch 上下文无法跨流挂起保存
+yield_in_defer	schema	yield was used inside a defer body	移除 defer 块内的 yield；defer 块不能挂起执行
+yield_requires_stream_fun	schema	yield was used outside a stream fun	仅在 stream fun 内使用 yield，或将函数声明为 stream
+yield_type_inference_failed	schema	Frontend could not infer yield type	为相关表达式添加显式类型，或改为可推断的字面量/变量
+yield_type_mismatch	schema	Yield values must have a consistent type	将 yield 表达式类型统一为 expected
+yield_value_required	schema	yield in a stream fun did not provide a value	为 stream fun 的 yield 提供返回值

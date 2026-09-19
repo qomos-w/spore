@@ -24,9 +24,17 @@ const (
 	CodeDecodeError = "decode_error"
 )
 
+// transportDiagnosticCodes is this package's diagnostic-code table; init()
+// registers it in order. Kept package-local so transport stays autonomous.
+var transportDiagnosticCodes = []diagnostics.CodeInfo{
+	{Code: CodeEncodeError, Category: diagnostics.CategoryTransport, Description: "Transport encoding failed", Hint: "检查待编码值是否符合 schema 类型要求"},
+	{Code: CodeDecodeError, Category: diagnostics.CategoryTransport, Description: "Transport decoding failed", Hint: "检查传输数据是否完整且版本兼容"},
+}
+
 func init() {
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeEncodeError, Category: diagnostics.CategoryTransport, Description: "Transport encoding failed", Hint: "检查待编码值是否符合 schema 类型要求"})
-	diagnostics.RegisterCode(diagnostics.CodeInfo{Code: CodeDecodeError, Category: diagnostics.CategoryTransport, Description: "Transport decoding failed", Hint: "检查传输数据是否完整且版本兼容"})
+	for _, info := range transportDiagnosticCodes {
+		diagnostics.RegisterCode(info)
+	}
 }
 
 // ViewKind classifies the transport view projection.
