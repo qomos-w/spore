@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/qomos-w/spore/binding"
+	"github.com/qomos-w/spore/ecsbind"
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/identity"
 	"github.com/qomos-w/spore/runtime"
@@ -683,7 +684,7 @@ func TestWorld_ProjectEntity(t *testing.T) {
 	w.SetComponent(e, "Position", &positionComponent{X: 10.5, Y: 20.3})
 
 	posDesc := positionClassDesc()
-	view, err := w.ProjectEntity(e, "Position", posDesc)
+	view, err := ecsbind.ProjectEntity(w, e, "Position", posDesc)
 	if err != nil {
 		t.Fatalf("ProjectEntity: %v", err)
 	}
@@ -707,7 +708,7 @@ func TestWorld_ProjectEntity_ComponentNotFound(t *testing.T) {
 	e := w.Create()
 
 	posDesc := positionClassDesc()
-	_, err := w.ProjectEntity(e, "Position", posDesc)
+	_, err := ecsbind.ProjectEntity(w, e, "Position", posDesc)
 	if err == nil {
 		t.Fatal("expected error for missing component, got nil")
 	}
@@ -728,7 +729,7 @@ func TestWorld_ProjectEntity_DisposedEntity(t *testing.T) {
 	w.Dispose(e)
 
 	posDesc := positionClassDesc()
-	_, err := w.ProjectEntity(e, "Position", posDesc)
+	_, err := ecsbind.ProjectEntity(w, e, "Position", posDesc)
 	if err == nil {
 		t.Fatal("expected error for disposed entity, got nil")
 	}
@@ -745,7 +746,7 @@ func TestWorld_ProjectEntityAll(t *testing.T) {
 		"Velocity": velocityClassDesc(),
 	}
 
-	view, err := w.ProjectEntityAll(e, descs)
+	view, err := ecsbind.ProjectEntityAll(w, e, descs)
 	if err != nil {
 		t.Fatalf("ProjectEntityAll: %v", err)
 	}
@@ -788,7 +789,7 @@ func TestWorld_PatchEntity(t *testing.T) {
 		Fields:   map[string]any{"X": 99.0, "Y": 88.0},
 	}
 
-	mutations, err := w.PatchEntity(e, "Position", posDesc, patchView)
+	mutations, err := ecsbind.PatchEntity(w, e, "Position", posDesc, patchView)
 	if err != nil {
 		t.Fatalf("PatchEntity: %v", err)
 	}
@@ -824,7 +825,7 @@ func TestWorld_ProjectEntityChangesToTransport_ChangedComponent(t *testing.T) {
 	codec := &transport.JSONCodec{}
 	componentDescs := map[string]schema.ObjectDesc{"Position": positionClassDesc()}
 
-	tv, err := w.ProjectEntityChangesToTransport(e, componentDescs, codec)
+	tv, err := ecsbind.ProjectEntityChangesToTransport(w, e, componentDescs, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -885,7 +886,7 @@ func TestWorld_ProjectEntityChangesToTransport_AddedAndRemovedComponents(t *test
 		"Health":   healthClassDesc(),
 	}
 
-	tv, err := w.ProjectEntityChangesToTransport(e, componentDescs, codec)
+	tv, err := ecsbind.ProjectEntityChangesToTransport(w, e, componentDescs, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -937,7 +938,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForChangedCompon
 	w.MarkChanged(e, "Velocity")
 
 	codec := &transport.JSONCodec{}
-	_, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{"Position": positionClassDesc()}, codec)
+	_, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{"Position": positionClassDesc()}, codec)
 	if err == nil {
 		t.Fatal("expected error for missing changed descriptor, got nil")
 	}
@@ -966,7 +967,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptorForAddedComponen
 	}
 
 	codec := &transport.JSONCodec{}
-	_, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{"Velocity": velocityClassDesc()}, codec)
+	_, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{"Velocity": velocityClassDesc()}, codec)
 	if err == nil {
 		t.Fatal("expected error for missing added descriptor, got nil")
 	}
@@ -994,7 +995,7 @@ func TestWorld_ProjectEntityChangesToTransport_EmptyPatch(t *testing.T) {
 	codec := &transport.JSONCodec{}
 	componentDescs := map[string]schema.ObjectDesc{"Position": positionClassDesc()}
 
-	tv, err := w.ProjectEntityChangesToTransport(e, componentDescs, codec)
+	tv, err := ecsbind.ProjectEntityChangesToTransport(w, e, componentDescs, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -1038,7 +1039,7 @@ func TestWorld_ProjectEntityChangesToTransport_MissingDescriptor(t *testing.T) {
 	}
 
 	codec := &transport.JSONCodec{}
-	_, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{}, codec)
+	_, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{}, codec)
 	if err == nil {
 		t.Fatal("expected error for missing descriptor, got nil")
 	}
@@ -1058,7 +1059,7 @@ func TestWorld_ProjectEntityChangesToTransport_DisposedEntity(t *testing.T) {
 	w.Dispose(e)
 
 	codec := &transport.JSONCodec{}
-	_, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{"Position": positionClassDesc()}, codec)
+	_, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{"Position": positionClassDesc()}, codec)
 	if err == nil {
 		t.Fatal("expected error for disposed entity, got nil")
 	}
@@ -1326,7 +1327,7 @@ func TestWorld_ProjectEntityToTransport(t *testing.T) {
 	codec := &transport.JSONCodec{}
 	posDesc := positionClassDesc()
 
-	tv, err := w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	tv, err := ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport: %v", err)
 	}
@@ -1365,7 +1366,7 @@ func TestWorld_ProjectEntityToTransport_FullRoundTrip(t *testing.T) {
 	posDesc := positionClassDesc()
 
 	// Project to transport
-	tv, err := w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	tv, err := ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport: %v", err)
 	}
@@ -1387,7 +1388,7 @@ func TestWorld_ProjectEntityToTransport_FullRoundTrip(t *testing.T) {
 		Identity: e2.ID(),
 		Fields:   decodedMap,
 	}
-	mutations, err := w.PatchEntity(e2, "Position", posDesc, patchView)
+	mutations, err := ecsbind.PatchEntity(w, e2, "Position", posDesc, patchView)
 	if err != nil {
 		t.Fatalf("PatchEntity: %v", err)
 	}

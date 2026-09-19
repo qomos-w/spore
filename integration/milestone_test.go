@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/qomos-w/spore/binding"
+	"github.com/qomos-w/spore/ecsbind"
 	"github.com/qomos-w/spore/identity"
 	"github.com/qomos-w/spore/internal/script/bytecode"
 	frontend "github.com/qomos-w/spore/internal/script/frontend"
@@ -792,7 +793,7 @@ func TestMilestone_RuntimeCarrier_EntityProjectionRoundTrip(t *testing.T) {
 	w.SetComponent(e, "Position", pos)
 
 	// Step 2: Project entity component to transport view
-	tv, err := w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	tv, err := ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport: %v", err)
 	}
@@ -828,7 +829,7 @@ func TestMilestone_RuntimeCarrier_EntityProjectionRoundTrip(t *testing.T) {
 		Identity: e2.ID(),
 		Fields:   decodedMap,
 	}
-	mutations, err := w.PatchEntity(e2, "Position", posDesc, patchView)
+	mutations, err := ecsbind.PatchEntity(w, e2, "Position", posDesc, patchView)
 	if err != nil {
 		t.Fatalf("PatchEntity: %v", err)
 	}
@@ -897,7 +898,7 @@ func TestMilestone_RuntimeCarrier_EntityLifecycleWithProjection(t *testing.T) {
 	w.SetComponent(e, "Position", &milestonePosition{X: 50, Y: 60})
 
 	// Should work before dispose
-	_, err := w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	_, err := ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport before dispose: %v", err)
 	}
@@ -906,7 +907,7 @@ func TestMilestone_RuntimeCarrier_EntityLifecycleWithProjection(t *testing.T) {
 	w.Dispose(e)
 
 	// Should fail after dispose
-	_, err = w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	_, err = ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err == nil {
 		t.Fatal("expected error projecting disposed entity, got nil")
 	}
@@ -926,7 +927,7 @@ func TestMilestone_RuntimeCarrier_IdentityConsistencyAcrossPlanes(t *testing.T) 
 	w.SetComponent(e, "Position", &milestonePosition{X: 1, Y: 2})
 
 	// Project to binding view
-	view, err := w.ProjectEntity(e, "Position", posDesc)
+	view, err := ecsbind.ProjectEntity(w, e, "Position", posDesc)
 	if err != nil {
 		t.Fatalf("ProjectEntity: %v", err)
 	}
@@ -937,7 +938,7 @@ func TestMilestone_RuntimeCarrier_IdentityConsistencyAcrossPlanes(t *testing.T) 
 	}
 
 	// Project to transport
-	tv, err := w.ProjectEntityToTransport(e, "Position", posDesc, codec)
+	tv, err := ecsbind.ProjectEntityToTransport(w, e, "Position", posDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport: %v", err)
 	}
@@ -982,7 +983,7 @@ func TestMilestone_RuntimeCarrier_StateChangeProjectionToTransportPatch(t *testi
 		t.Fatalf("SetComponent Health: %v", err)
 	}
 
-	tv, err := w.ProjectEntityChangesToTransport(e, componentDescs, codec)
+	tv, err := ecsbind.ProjectEntityChangesToTransport(w, e, componentDescs, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -1083,7 +1084,7 @@ func TestMilestone_SporeClosure_RuntimeCarrierCallableAndTransport(t *testing.T)
 	w.MarkChanged(e, "Health")
 
 	healthDesc := milestoneHealthClassDesc()
-	fullView, err := w.ProjectEntityToTransport(e, "Health", healthDesc, codec)
+	fullView, err := ecsbind.ProjectEntityToTransport(w, e, "Health", healthDesc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport: %v", err)
 	}
@@ -1102,7 +1103,7 @@ func TestMilestone_SporeClosure_RuntimeCarrierCallableAndTransport(t *testing.T)
 		t.Fatalf("expected full view Value=15, got %v", fullMap["Value"])
 	}
 
-	patchView, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{"Health": healthDesc}, codec)
+	patchView, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{"Health": healthDesc}, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -1168,11 +1169,11 @@ func TestMilestone_ExternalConsumer_UsesOnlySporeSurfaces(t *testing.T) {
 		obj.target.Value = value
 		w.MarkChanged(carrier, obj.classDesc.Name)
 
-		fullView, err := w.ProjectEntityToTransport(carrier, obj.classDesc.Name, obj.classDesc, c.codec)
+		fullView, err := ecsbind.ProjectEntityToTransport(w, carrier, obj.classDesc.Name, obj.classDesc, c.codec)
 		if err != nil {
 			return transport.View{}, transport.View{}, err
 		}
-		patchView, err := w.ProjectEntityChangesToTransport(carrier, map[string]schema.ObjectDesc{obj.classDesc.Name: obj.classDesc}, c.codec)
+		patchView, err := ecsbind.ProjectEntityChangesToTransport(w, carrier, map[string]schema.ObjectDesc{obj.classDesc.Name: obj.classDesc}, c.codec)
 		if err != nil {
 			return transport.View{}, transport.View{}, err
 		}
@@ -1723,7 +1724,7 @@ func TestMilestone_ScriptLanguageFuture_RuntimeBoundary_NoVMObjectsInWorld(t *te
 		t.Fatalf("expected projected Value=15, got %v", view.Fields["Value"])
 	}
 
-	patchView, err := w.ProjectEntityChangesToTransport(e, map[string]schema.ObjectDesc{"scriptState": scriptStateDesc}, codec)
+	patchView, err := ecsbind.ProjectEntityChangesToTransport(w, e, map[string]schema.ObjectDesc{"scriptState": scriptStateDesc}, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityChangesToTransport: %v", err)
 	}
@@ -1822,7 +1823,7 @@ func TestMilestone_BindingLifecycle_EntityDisposeInvalidatesBinding(t *testing.T
 	if err != nil {
 		t.Fatalf("ProjectView before dispose: %v", err)
 	}
-	tv, err := w.ProjectEntityToTransport(e, "lifecycleTestItem", desc, codec)
+	tv, err := ecsbind.ProjectEntityToTransport(w, e, "lifecycleTestItem", desc, codec)
 	if err != nil {
 		t.Fatalf("ProjectEntityToTransport before dispose: %v", err)
 	}

@@ -48,7 +48,7 @@ func (b *ecsWorldBenchBinding) Get(id string, comp string) map[string]any {
 	if !ok {
 		return nil
 	}
-	proj, err := b.w.ProjectEntity(e, comp, b.desc)
+	proj, err := ecsbind.ProjectEntity(b.w, e, comp, b.desc)
 	if err != nil {
 		return nil
 	}
@@ -60,7 +60,7 @@ func (b *ecsWorldBenchBinding) Set(id string, comp string, fields map[string]any
 	if !ok {
 		return 0
 	}
-	muts, err := b.w.PatchEntity(e, comp, b.desc, &binding.ViewProjection{
+	muts, err := ecsbind.PatchEntity(b.w, e, comp, b.desc, &binding.ViewProjection{
 		Schema: b.desc,
 		Fields: fields,
 	})
@@ -91,7 +91,7 @@ func (b *ecsWorldBenchBinding) View(has []string, changed []string) (map[string]
 		comp := has[0]
 		arr := make([]map[string]any, len(entities))
 		for i, e := range entities {
-			view, err := b.w.ProjectEntity(e, comp, b.desc)
+			view, err := ecsbind.ProjectEntity(b.w, e, comp, b.desc)
 			if err != nil {
 				arr[i] = nil
 				continue
@@ -121,7 +121,7 @@ func (b *ecsWorldBenchBinding) Apply(comp string, ids []string, fields []map[str
 		if fields[i] == nil {
 			continue
 		}
-		if _, err := b.w.PatchEntity(e, comp, b.desc, &binding.ViewProjection{
+		if _, err := ecsbind.PatchEntity(b.w, e, comp, b.desc, &binding.ViewProjection{
 			Schema: b.desc,
 			Fields: fields[i],
 		}); err != nil {

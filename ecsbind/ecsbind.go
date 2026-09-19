@@ -9,8 +9,8 @@
 //  1. Scripts only see values that can cross the VM boundary safely:
 //     entity IDs as hex strings, component payloads as map[string]any,
 //     primitives, slices, and errors. No Go pointers ever leak.
-//  2. Every read goes through schema.ProjectEntity (one-way projection)
-//     and every write goes through schema.PatchEntity (explicit opt-in +
+//  2. Every read goes through ecsbind.ProjectEntity (one-way projection)
+//     and every write goes through ecsbind.PatchEntity (explicit opt-in +
 //     automatic Mark on success). This keeps the binding layer's
 //     authority model intact — scripts never reach into the runtime
 //     carrier's storage directly.
@@ -232,7 +232,7 @@ func (b *WorldBinding) Get(id, comp string) (map[string]any, error) {
 		// surfaces stale IDs explicitly.
 		return nil, nil
 	}
-	view, err := b.w.ProjectEntity(e, comp, desc)
+	view, err := ProjectEntity(b.w, e, comp, desc)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (b *WorldBinding) Get(id, comp string) (map[string]any, error) {
 
 // Set writes the field map back to the entity's component via
 // PatchEntity. On success the component is automatically MarkChanged
-// (runtime.PatchEntity's contract, world.go:472-474), and the mutation
+// (ecsbind.PatchEntity contract, projection.go), and the mutation
 // count is returned so it can be used as an "applied fields" indicator
 // in scripts.
 //
@@ -257,7 +257,7 @@ func (b *WorldBinding) Set(id, comp string, fields map[string]any) (int, error) 
 	if !ok {
 		return 0, b.errStaleEntity(id)
 	}
-	muts, err := b.w.PatchEntity(e, comp, desc, &binding.ViewProjection{
+	muts, err := PatchEntity(b.w, e, comp, desc, &binding.ViewProjection{
 		Schema: desc,
 		Fields: fields,
 	})
@@ -467,7 +467,7 @@ func (b *WorldBinding) ViewBody(has []string, changed []string) ([]string, map[s
 			continue
 		}
 		for i, p := range pairs {
-			view, err := b.w.ProjectEntity(p.e, comp, desc)
+			view, err := ProjectEntity(b.w, p.e, comp, desc)
 			if err != nil {
 				arr[i] = nil
 				continue
@@ -512,7 +512,7 @@ func emptyPerComponentMap(has []string) map[string][]map[string]any {
 // See verify-vm-batch-encoding for the VM-side evidence.
 //
 // Each successful PatchEntity auto-Marks the component as changed
-// (runtime.PatchEntity's contract, world.go:472-474), so the caller
+// (ecsbind.PatchEntity contract, projection.go), so the caller
 // does not need a follow-up Mark() call.
 func (b *WorldBinding) Apply(comp string, ids []string, fields []map[string]any) (int, error) {
 	desc, registered := b.descs[comp]
@@ -538,7 +538,7 @@ func (b *WorldBinding) Apply(comp string, ids []string, fields []map[string]any)
 			// and lets scripts overwrite a subset of entities.
 			continue
 		}
-		if _, err := b.w.PatchEntity(e, comp, desc, &binding.ViewProjection{
+		if _, err := PatchEntity(b.w, e, comp, desc, &binding.ViewProjection{
 			Schema: desc,
 			Fields: view,
 		}); err != nil {
