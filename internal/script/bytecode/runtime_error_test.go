@@ -135,7 +135,15 @@ func TestRuntimeError_AllDiagnosticCodesRegistered(t *testing.T) {
 }
 
 func TestRuntimeError_AllRuntimeErrorCodesAreRegistered(t *testing.T) {
-	files := []string{"interpreter.go", "vm_evaluator.go"}
+	files := []string{
+		"interpreter.go",
+		"interpreter_run.go",
+		"interpreter_instruction.go",
+		"interpreter_native.go",
+		"interpreter_diagnostics.go",
+		"interpreter_ops.go",
+		"vm_evaluator.go",
+	}
 	re := regexp.MustCompile(`RuntimeError\{[^}]*Code:\s*"([a-z_]+)"`)
 	seen := map[string]struct{}{}
 	for _, name := range files {
