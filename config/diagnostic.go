@@ -122,7 +122,9 @@ var (
 func init() {
 	cat := diagnostics.CategorySchema
 	for _, info := range []diagnostics.CodeInfo{
-		{Code: "config_parse_error", Category: cat, Description: "config parse error", Hint: "check syntax near the reported line"},
+		{Code: CodeConfigParseError, Category: cat, Description: "config parse error", Hint: "check syntax near the reported line"},
+		{Code: CodeConfigIntOverflow, Category: cat, Description: "integer literal out of range for int64", Hint: "use a value within int64 range (-9223372036854775808..9223372036854775807), or write it as a float"},
+		{Code: CodeConfigFloatOverflow, Category: cat, Description: "numeric literal out of range for float64", Hint: "reduce the magnitude of the literal"},
 		{Code: "config_markdown_block", Category: cat, Description: "config wrapped in markdown code block", Hint: "auto-stripped markdown fencing"},
 		{Code: "config_json_quotes", Category: cat, Description: "JSON-style quoted map keys", Hint: "auto-removed quotes from map keys; use bare identifiers"},
 		{Code: "config_json_trailing_comma", Category: cat, Description: "JSON-style trailing comma before } or ]", Hint: "auto-removed trailing commas"},

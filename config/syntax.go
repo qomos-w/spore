@@ -163,13 +163,4 @@ func (v Value) String() string {
 	}
 }
 
-// parseError creates a formatted parse error.
-type parseError struct {
-	Message string
-	Line    int
-	Col     int
-}
-
-func (e *parseError) Error() string {
-	return fmt.Sprintf("config parse error at line %d: %s", e.Line, e.Message)
-}
+// Syntax errors are defined in syntax_error.go (SyntaxError, SyntaxDiagnostics).

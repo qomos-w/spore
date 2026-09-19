@@ -218,6 +218,8 @@ func TestDiagnosticCodes_Registered(t *testing.T) {
 	// If this test runs without panic, registration succeeded.
 	codes := []string{
 		"config_parse_error",
+		"config_int_overflow",
+		"config_float_overflow",
 		"config_markdown_block",
 		"config_json_quotes",
 		"config_json_trailing_comma",

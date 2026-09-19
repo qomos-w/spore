@@ -10,6 +10,8 @@ func TestConfig_AllDiagnosticCodesRegistered(t *testing.T) {
 	codes := []string{
 		// parser corrections
 		"config_parse_error",
+		"config_int_overflow",
+		"config_float_overflow",
 		"config_markdown_block",
 		"config_json_quotes",
 		"config_json_trailing_comma",

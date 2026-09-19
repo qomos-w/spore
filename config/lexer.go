@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"unicode"
 )
@@ -86,7 +88,7 @@ func (l *lexer) nextToken() token {
 		}
 		return l.makeToken(tokNewline)
 	default:
-		return l.errorToken("unexpected character")
+		return l.errorToken(fmt.Sprintf("unexpected character %q", string(ch)))
 	}
 }
 
@@ -107,12 +109,53 @@ func (l *lexer) number() token {
 			l.advance()
 		}
 		tok := l.makeToken(tokFloatLit)
-		tok.floatVal, _ = strconv.ParseFloat(tok.lexeme, 64)
+		val, err := strconv.ParseFloat(tok.lexeme, 64)
+		if err != nil {
+			return l.literalError(tok, Diagnostic{
+				Code:     CodeConfigFloatOverflow,
+				Message:  fmt.Sprintf("float literal %s is out of range for float64", tok.lexeme),
+				Hint:     "reduce the magnitude of the literal",
+				Expected: "float64",
+				Actual:   tok.lexeme,
+			})
+		}
+		tok.floatVal = val
 		return tok
 	}
 	tok := l.makeToken(tokIntLit)
-	tok.intVal, _ = strconv.ParseInt(tok.lexeme, 10, 64)
+	val, err := strconv.ParseInt(tok.lexeme, 10, 64)
+	if err != nil {
+		if !errors.Is(err, strconv.ErrRange) {
+			return l.errorToken(fmt.Sprintf("invalid integer literal %q", tok.lexeme))
+		}
+		return l.literalError(tok, Diagnostic{
+			Code:     CodeConfigIntOverflow,
+			Message:  fmt.Sprintf("integer literal %s is out of range for int64", tok.lexeme),
+			Hint:     "use a value within int64 range (-9223372036854775808..9223372036854775807), or write it as a float",
+			Expected: "int64",
+			Actual:   tok.lexeme,
+		})
+	}
+	tok.intVal = val
 	return tok
+}
+
+// literalError turns a syntactically valid but numerically out-of-range literal
+// into an error token that carries an explicit diagnostic. Previously the
+// ParseInt/ParseFloat error was discarded, so an out-of-range literal silently
+// became 0 (int) or +Inf (float) and the parse reported no problem at all.
+func (l *lexer) literalError(tok token, diag Diagnostic) token {
+	diag.Category = "parse"
+	diag.Severity = "error"
+	diag.Line = tok.line
+	diag.Col = tok.col
+	return token{
+		typ:    tokError,
+		lexeme: diag.Message,
+		line:   tok.line,
+		col:    tok.col,
+		diag:   &diag,
+	}
 }
 
 func (l *lexer) stringLiteral() token {
