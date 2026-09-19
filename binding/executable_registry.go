@@ -1,6 +1,7 @@
 package binding
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/qomos-w/spore/schema"
@@ -68,9 +69,24 @@ func (r *ExecutableRegistry) ForEachAdapter(fn func(name string, adapter Executa
 }
 
 // Invoke dispatches an invocation request to the appropriate adapter.
+//
+// A declared MaxDuration budget is applied here, once, as a context deadline:
+// an earlier caller deadline is preserved, otherwise the adapter receives a
+// context whose deadline is now+MaxDuration. This mirrors
+// script.CallContext.context() so the duration budget flows through ctx
+// instead of being enforced twice.
 func (r *ExecutableRegistry) Invoke(req InvocationRequest) (InvocationOutcome, error) {
 	if r.callables == nil {
 		return InvocationOutcome{}, fmt.Errorf("callable registry is required")
+	}
+	if req.Budget.MaxDuration > 0 {
+		ctx := req.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		child, cancel := context.WithTimeout(ctx, req.Budget.MaxDuration)
+		defer cancel()
+		req.Context = child
 	}
 	desc, ok := r.callables.LookupRef(req.Callable)
 	if !ok {
