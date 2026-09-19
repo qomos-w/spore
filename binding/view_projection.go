@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync"
 
 	"github.com/qomos-w/spore/identity"
 	"github.com/qomos-w/spore/schema"
@@ -32,6 +33,54 @@ type ViewProjection struct {
 	Schema   schema.ObjectDesc
 	Identity identity.CanonicalID
 	Fields   map[string]any
+}
+
+// projectionField is one resolved schema→struct-field entry of a projection
+// plan. A nil index marks a schema field with no matching struct field
+// (exact name or json tag); projection reports it per call.
+type projectionField struct {
+	fd    schema.FieldDesc
+	index []int
+}
+
+type projectionPlanKey struct {
+	typ    reflect.Type
+	schema string
+	fields int
+}
+
+// projectionPlans caches schema→struct resolution per (struct type, schema
+// name, field count). Struct layouts and registered schemas are immutable
+// at projection time, so plans are reusable across entities — the per-entity
+// cost of ViewBody-style column iteration drops to a map lookup plus a
+// FieldByIndex.
+var projectionPlans sync.Map // projectionPlanKey -> []projectionField
+
+// projectionPlan resolves every schema-declared field of desc against t,
+// following the same name semantics as ApplyViewPatch: exact Go field name
+// first, json tag (JSONTagName) second.
+func projectionPlan(t reflect.Type, desc schema.ObjectDesc) []projectionField {
+	key := projectionPlanKey{typ: t, schema: desc.Name, fields: len(desc.Fields)}
+	if cached, ok := projectionPlans.Load(key); ok {
+		return cached.([]projectionField)
+	}
+	tags := jsonTagIndex(t)
+	plan := make([]projectionField, len(desc.Fields))
+	for i, fd := range desc.Fields {
+		sf, ok := t.FieldByName(fd.Name)
+		if !ok {
+			if goName, tagOk := tags[fd.Name]; tagOk {
+				sf, ok = t.FieldByName(goName)
+			}
+		}
+		if ok {
+			plan[i] = projectionField{fd: fd, index: sf.Index}
+		} else {
+			plan[i] = projectionField{fd: fd}
+		}
+	}
+	actual, _ := projectionPlans.LoadOrStore(key, plan)
+	return actual.([]projectionField)
 }
 
 // ProjectView creates a transport-consumable view from a valid object binding.
@@ -63,26 +112,26 @@ func ProjectView(binding *ObjectBinding) (*ViewProjection, error) {
 	}
 
 	fields := make(map[string]any, len(binding.Schema.Fields))
-	for _, fd := range binding.Schema.Fields {
-		fv := v.FieldByName(fd.Name)
-		if !fv.IsValid() {
+	for _, pf := range projectionPlan(v.Type(), binding.Schema) {
+		if pf.index == nil {
 			return nil, &BindingError{
 				Identity: binding.Identity,
 				Schema:   binding.Schema.Name,
-				Path:     "." + fd.Name,
-				Err:      fmt.Errorf("field %q not found in runtime struct", fd.Name),
+				Path:     "." + pf.fd.Name,
+				Err:      fmt.Errorf("field %q not found in runtime struct", pf.fd.Name),
 			}
 		}
-		projected, err := projectFieldValue(fd, fv)
+		fv := v.FieldByIndex(pf.index)
+		projected, err := projectFieldValue(pf.fd, fv)
 		if err != nil {
 			return nil, &BindingError{
 				Identity: binding.Identity,
 				Schema:   binding.Schema.Name,
-				Path:     "." + fd.Name,
+				Path:     "." + pf.fd.Name,
 				Err:      err,
 			}
 		}
-		fields[fd.Name] = projected
+		fields[pf.fd.Name] = projected
 	}
 
 	return &ViewProjection{

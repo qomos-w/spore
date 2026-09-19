@@ -27,6 +27,25 @@ import (
 	"github.com/qomos-w/spore/schema"
 )
 
+// jsonTagIndex maps each exported top-level field's json tag name (per
+// JSONTagName) to its Go field name, for tags that differ from the Go name.
+// Fields without tags are omitted: they resolve through the exact-name path.
+func jsonTagIndex(t reflect.Type) map[string]string {
+	index := make(map[string]string)
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		name := JSONTagName(sf)
+		if name == "" || name == "-" || name == sf.Name {
+			continue
+		}
+		index[name] = sf.Name
+	}
+	return index
+}
+
 // MutationKind classifies the type of change observed during a binding operation.
 func ApplyViewPatch(b *ObjectBinding, view *ViewProjection) ([]MutationResult, error) {
 	if b == nil || !b.Valid() {
@@ -52,23 +71,45 @@ func ApplyViewPatch(b *ObjectBinding, view *ViewProjection) ([]MutationResult, e
 		}
 	}
 
-	// Build a lookup of schema-declared fields
+	// Build a lookup of schema-declared fields. View keys may arrive as the
+	// schema field name, the Go field name, or the Go field's json tag
+	// (scripts naturally emit lowerCamel); resolution order follows
+	// encoding/json semantics: exact schema/Go name first, json tag second.
 	schemaFields := make(map[string]schema.FieldDesc, len(b.Schema.Fields))
 	for _, fd := range b.Schema.Fields {
 		schemaFields[fd.Name] = fd
 	}
+	tagToGoName := jsonTagIndex(v.Type())
 
 	var mutations []MutationResult
 
 	for fieldName, fieldValue := range view.Fields {
 		fd, inSchema := schemaFields[fieldName]
 		if !inSchema {
-			continue
+			// Fall back: the view key may be a json tag whose Go field name
+			// is the schema-declared name.
+			goName, ok := tagToGoName[fieldName]
+			if !ok {
+				continue
+			}
+			fd, inSchema = schemaFields[goName]
+			if !inSchema {
+				continue
+			}
 		}
 
 		fv := v.FieldByName(fieldName)
 		if !fv.IsValid() || !fv.CanSet() {
-			continue
+			// Schema fields named by json tag resolve to differently-named
+			// Go fields.
+			goName, ok := tagToGoName[fieldName]
+			if !ok {
+				continue
+			}
+			fv = v.FieldByName(goName)
+			if !fv.IsValid() || !fv.CanSet() {
+				continue
+			}
 		}
 
 		oldVal := fv.Interface()
