@@ -33,6 +33,11 @@
 // (internal/script/frontend), never the script execution runtime: the CLI
 // only needs type declarations, so the VM, bytecode, and binding packages
 // must not be linked into its dependency graph.
+//
+// Generation runs through the public gen/render façade — the same entry point
+// external embedders use — so the four spore-gen-* CLIs present one symmetric
+// public code-generation surface. Only CLI plumbing (flag registration, .spore
+// parsing, file IO) comes from internal packages.
 package main
 
 import (
@@ -45,7 +50,7 @@ import (
 	"sort"
 	"strings"
 
-	gotypes "github.com/qomos-w/spore/internal/gen/go-types"
+	"github.com/qomos-w/spore/gen/render"
 	"github.com/qomos-w/spore/internal/script/frontend"
 	"github.com/qomos-w/spore/schema"
 )
@@ -102,7 +107,7 @@ func main() {
 	written := 0
 	for _, file := range parsed.files {
 		outPath := filepath.Join(*outDir, file.stem+".gen.go")
-		if err := generateOne(file, outPath, gotypes.Options{
+		if err := generateOne(file, outPath, render.GoTypesOptions{
 			Package:        *pkgName,
 			Header:         *header,
 			StructNames:    structNames,
@@ -116,7 +121,7 @@ func main() {
 	}
 
 	registryPath := filepath.Join(*outDir, registryFile)
-	reg, err := gotypes.RenderRegistry(entries, gotypes.Options{
+	reg, err := render.RenderGoTypesRegistry(entries, render.GoTypesOptions{
 		Package:        *pkgName,
 		Header:         *header,
 		NoRegistryInit: *noReg,
@@ -170,7 +175,7 @@ func parseAll(paths []string, rootForRel string) (*parsedSet, error) {
 
 		// Assign sequential IDs based on filename suffix; explicit @schema(N)
 		// annotations are preserved. This is idempotent and per-file.
-		gotypes.AssignSequentialSchemaIDs(objs, label)
+		render.AssignSequentialSchemaIDs(objs, label)
 
 		stem := deriveStem(p)
 		set.files = append(set.files, parsedFile{
@@ -250,14 +255,14 @@ func collectStructNames(set *parsedSet) map[string]bool {
 	return names
 }
 
-func registryEntries(set *parsedSet) []gotypes.RegistryEntry {
-	var entries []gotypes.RegistryEntry
+func registryEntries(set *parsedSet) []render.RegistryEntry {
+	var entries []render.RegistryEntry
 	for _, file := range set.files {
 		for _, obj := range file.objs {
 			if obj.Kind != schema.TypeKindStruct || obj.SchemaID == 0 {
 				continue
 			}
-			entries = append(entries, gotypes.RegistryEntry{
+			entries = append(entries, render.RegistryEntry{
 				ID:          obj.SchemaID,
 				Name:        obj.Name,
 				SourceFile:  file.sourceLabel,
@@ -268,10 +273,10 @@ func registryEntries(set *parsedSet) []gotypes.RegistryEntry {
 	return entries
 }
 
-func generateOne(file parsedFile, outPath string, opts gotypes.Options) error {
+func generateOne(file parsedFile, outPath string, opts render.GoTypesOptions) error {
 	opts.SourcePath = file.sourceLabel
 	opts.Enums = file.enums
-	rendered, err := gotypes.Render(file.objs, opts)
+	rendered, err := render.RenderGoTypes(file.objs, opts)
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}

@@ -9,6 +9,11 @@
 // renderer's concern; the caller is expected to group related objects into
 // the same call when they share a Go package.
 //
+// It is internal to the spore module. The public code-generation entry points
+// are the `spore-gen-go-types` CLI and the re-exports `RenderGoTypes`,
+// `RenderGoTypesRegistry` and `AssignSequentialSchemaIDs` in gen/render; the
+// CLI itself calls those re-exports rather than this package directly.
+//
 // Field naming convention:
 //
 //   - Go field name = PascalCase of the Spore field name. Acronyms are not

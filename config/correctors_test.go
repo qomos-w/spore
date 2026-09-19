@@ -223,3 +223,122 @@ func TestFormatGuard_PlainTextRejected(t *testing.T) {
 		t.Errorf("expected config_format_rejected, got %q", diags[0].Code)
 	}
 }
+
+// The rewriting correctors must never touch text that lives inside a string
+// literal. Each case below contains a regex-like pattern that the corresponding
+// corrector would otherwise rewrite, corrupting the value.
+
+func TestStripJSONTrailingCommas_NotInsideString(t *testing.T) {
+	c := StripJSONTrailingCommas()
+	inputs := []string{
+		`msg: "value,]"`,               // ,] inside a value
+		`pattern: "array [1, 2,]"`,     // ,] inside a value
+		`note: "brace,}"`,              // ,} inside a value
+		`msg: "a \"b, ] c"`,            // escaped quote, then , ]
+		"msg: \"line1,\nline2\"",       // ,\n inside a multi-line value
+		"msg: \"unterminated, ]",       // unterminated literal: stay conservative
+	}
+	for _, input := range inputs {
+		cleaned, diags := c(input)
+		if len(diags) != 0 {
+			t.Errorf("%q: expected no diags, got %+v", input, diags)
+		}
+		if cleaned != input {
+			t.Errorf("%q: string content must not be rewritten, got %q", input, cleaned)
+		}
+	}
+}
+
+func TestStripJSONTrailingCommas_StillRewritesOutsideStrings(t *testing.T) {
+	c := StripJSONTrailingCommas()
+	// One trailing comma outside any string, one comma that is string content.
+	input := "items: [1, 2,]\nmsg: \"a, b,\""
+	cleaned, diags := c(input)
+	if len(diags) != 1 {
+		t.Fatalf("expected one diag, got %+v", diags)
+	}
+	if strings.Contains(cleaned, ",]") {
+		t.Errorf("array trailing comma should be removed: %q", cleaned)
+	}
+	if !strings.Contains(cleaned, `msg: "a, b,"`) {
+		t.Errorf("string value must be preserved verbatim: %q", cleaned)
+	}
+}
+
+func TestNormalizeEquals_NotInsideString(t *testing.T) {
+	c := NormalizeEquals()
+	// A multi-line string literal whose line looks like key = value.
+	input := "msg: \"first\nkey = value\nlast\""
+	cleaned, diags := c(input)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diags, got %+v", diags)
+	}
+	if cleaned != input {
+		t.Errorf("string content must not be rewritten, got %q", cleaned)
+	}
+}
+
+func TestNormalizeEquals_RewritesOutsideStringsOnly(t *testing.T) {
+	c := NormalizeEquals()
+	input := "msg: \"first\nkey = value\nlast\"\nport = 5432"
+	cleaned, diags := c(input)
+	if len(diags) != 1 || diags[0].Code != "config_equals_colon" {
+		t.Fatalf("expected one equals_colon diag, got %+v", diags)
+	}
+	if !strings.Contains(cleaned, "key = value") {
+		t.Errorf("in-string `key = value` must be preserved: %q", cleaned)
+	}
+	if !strings.Contains(cleaned, "port: 5432") {
+		t.Errorf("real `port = 5432` should be normalized: %q", cleaned)
+	}
+}
+
+func TestStripJSONQuotes_NotInsideString(t *testing.T) {
+	c := StripJSONQuotes()
+	// Escaped quotes plus a colon inside a value: a quoted-key match must not
+	// fire on literal content.
+	input := `note: "see \"host\": here"`
+	cleaned, diags := c(input)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diags, got %+v", diags)
+	}
+	if cleaned != input {
+		t.Errorf("string content must not be rewritten, got %q", cleaned)
+	}
+}
+
+func TestStripJSONQuotes_StillRewritesMapKeys(t *testing.T) {
+	c := StripJSONQuotes()
+	// A quoted key at the start of a line and one after `{` must both survive
+	// the string-literal gate.
+	input := "{\n  \"host\": \"localhost\",\n  \"port\": 5432\n}"
+	cleaned, diags := c(input)
+	if len(diags) != 1 || diags[0].Code != "config_json_quotes" {
+		t.Fatalf("expected one json_quotes diag, got %+v", diags)
+	}
+	if strings.Contains(cleaned, `"host"`) || strings.Contains(cleaned, `"port"`) {
+		t.Errorf("map keys should be unquoted: %q", cleaned)
+	}
+	if !strings.Contains(cleaned, `"localhost"`) {
+		t.Errorf("string value must be preserved: %q", cleaned)
+	}
+}
+
+func TestStripJSONBrackets_StringWithBrace(t *testing.T) {
+	c := StripJSONBrackets()
+	// Braces inside a string are content, not nesting: the outer JSON object
+	// braces must still be stripped.
+	for _, input := range []string{
+		`{ msg: "closing } brace" }`,
+		`{ msg: "opening { brace" }`,
+		`{ msg: "both { and } inside" }`,
+	} {
+		cleaned, diags := c(input)
+		if len(diags) != 1 || diags[0].Code != "config_json_brackets" {
+			t.Fatalf("%q: expected one json_brackets diag, got %+v", input, diags)
+		}
+		if strings.HasPrefix(strings.TrimSpace(cleaned), "{") {
+			t.Errorf("%q: outer braces should be stripped: %q", input, cleaned)
+		}
+	}
+}

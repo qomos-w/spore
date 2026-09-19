@@ -23,8 +23,10 @@
 // package does not yet target. exp09 (the primary consumer today) hits
 // only the supported subset.
 //
-// Like ts and ts-client, this package is internal to the spore module:
-// external users invoke the wrapping CLI in `cmd/spore-gen-go-server`.
+// Like ts and ts-client, this package is internal to the spore module. The
+// public code-generation entry points are the `spore-gen-go-server` CLI and the
+// re-export `GenerateGoServer` in gen/render; the CLI itself calls that
+// re-export rather than this package directly.
 package goserver
 
 import (

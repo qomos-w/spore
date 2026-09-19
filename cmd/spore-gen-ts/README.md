@@ -337,31 +337,32 @@ generators that consume the same manifest. The companion
 
 ## Calling the package directly
 
-If you would rather skip the JSON manifest, you can import the gen package
-from any program **inside** the spore module (it lives at
-`internal/gen/ts`, so external imports are not allowed):
+Embedders **outside** the spore module drive generation through the public
+`gen/render` façade. It re-exports this generator — and the other three — over
+the visibility/options contract they share, so no internal import is required.
+Programs inside the spore module may still import `internal/gen/ts` directly.
 
 ```go
 import (
-    gents "github.com/qomos-w/spore/internal/gen/ts"
+    "github.com/qomos-w/spore/gen/render"
     "github.com/qomos-w/spore/schema"
 )
 
-files, err := gents.Generate(
-    []gents.NamedObjectDesc{
+files, err := render.Generate(
+    []render.NamedObjectDesc{
         {
             Namespace:  "auth",
             SchemaID:   1,
             Name:       "LoginReq",
             Object:     loginReqObject,
-            Visibility: gents.VisibilityPublic,
+            Visibility: render.VisibilityPublic,
         },
     },
-    []gents.NamedCallableDesc{
+    []render.NamedCallableDesc{
         {
             Namespace:     "auth",
             Name:          "lookup_user",
-            Visibility:    gents.VisibilityPublic,
+            Visibility:    render.VisibilityPublic,
             Mode:          schema.CallableModeUnary,
             ReqSchemaID:   1,
             FinalSchemaID: 2,
@@ -369,15 +370,17 @@ files, err := gents.Generate(
             Final:         loginRespType,
         },
     },
-    gents.Options{
-        Visibilities: []gents.Visibility{gents.VisibilityPublic},
+    render.Options{
+        Visibilities: []render.Visibility{render.VisibilityPublic},
         Header:       "// AUTO-GENERATED — DO NOT EDIT",
     },
 )
 ```
 
 `Generate` returns `map[relPath]content`; the CLI is a thin wrapper that
-writes each entry to disk.
+writes each entry to disk. The sibling generators have the matching façade
+entry points `GenerateTSClient`, `GenerateGoServer`, `RenderGoTypes` and
+`RenderGoTypesRegistry` in the same package.
 
 ## Verification
 

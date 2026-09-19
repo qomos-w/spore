@@ -12,8 +12,10 @@
 // passing the spec object literal (namespace / name / schema IDs) the
 // transport needs to encode the wire frame.
 //
-// Like `internal/gen/ts`, this is internal to the spore module: external
-// users invoke the wrapping CLI in `cmd/spore-gen-ts-client`.
+// Like `internal/gen/ts`, this is internal to the spore module. The public
+// code-generation entry points are the `spore-gen-ts-client` CLI and the
+// re-export `GenerateTSClient` in gen/render; the CLI itself calls that
+// re-export rather than this package directly.
 package tsclient
 
 import (

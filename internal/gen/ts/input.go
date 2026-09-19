@@ -1,8 +1,10 @@
 // Package ts provides TypeScript code generation from spore schema descriptors.
 //
 // It is internal to the spore module: the public-facing entry points are the
-// `spore-gen-ts` CLI in cmd/spore-gen-ts and the re-exporting wrapper in
-// gen/render, which reads a JSON manifest of NamedObjectDesc entries.
+// `spore-gen-ts` CLI in cmd/spore-gen-ts and the re-exporting façade in
+// gen/render, which reads a JSON manifest of NamedObjectDesc entries. gen/render
+// re-exports all four generators (ts, ts-client, go-server, go-types) so
+// embedders see one symmetric public code-generation surface.
 //
 // The input contract (Visibility, Options, NamedObjectDesc, NamedCallableDesc)
 // lives in internal/gen/common and is aliased here so consumers keep using the
