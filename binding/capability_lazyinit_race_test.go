@@ -9,13 +9,13 @@ import (
 )
 
 // TestScriptBinding_CapabilitiesLazyInitRaceFree exercises the lazy
-// initialization of ScriptBinding.Capabilities under concurrency.
-// Run with -race: the check-then-act nil guard that once guarded this
-// field would have flagged a write/read race on concurrent first use;
-// the sync.Once path must not.
+// initialization of the ScriptBinding's unified registry under concurrency.
+// Run with -race: the check-then-act nil guard that once guarded the
+// capabilities field would have flagged a write/read race on concurrent
+// first use; the single-lock ensureRegistry path must not.
 func TestScriptBinding_CapabilitiesLazyInitRaceFree(t *testing.T) {
-	// Zero-value ScriptBinding: Capabilities starts nil, forcing every
-	// call below through ensureCapabilities' once.Do.
+	// Zero-value ScriptBinding: the registry starts nil, forcing every
+	// call below through ensureRegistry.
 	sb := &binding.ScriptBinding{}
 
 	builder := binding.NewCapability("tool", "service")
@@ -46,7 +46,7 @@ func TestScriptBinding_CapabilitiesLazyInitRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 
-	if sb.Capabilities == nil {
-		t.Fatal("ensureCapabilities must have initialized the registry")
+	if _, ok := sb.DescribeCapability("tool"); !ok {
+		t.Fatal("concurrent registration must have initialized the registry")
 	}
 }

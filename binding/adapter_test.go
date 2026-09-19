@@ -12,17 +12,15 @@ import (
 )
 
 // ============================================================================
-// ExecutableRegistry tests
+// Unified registry (executable plane) tests
 // ============================================================================
 
-func TestExecutableRegistry_RegisterAdapterAndLookup(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	desc, err := callables.RegisterGoFunction("greet", greet)
+func TestRegistry_RegisterAdapterAndLookup(t *testing.T) {
+	reg := binding.NewRegistry()
+	desc, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("RegisterGoFunction: %v", err)
 	}
-
-	exec := binding.NewExecutableRegistry(callables)
 
 	adapter, err := binding.NewUnaryInvocationAdapter(desc, func(args []any) (any, error) {
 		return args[1], nil
@@ -31,11 +29,11 @@ func TestExecutableRegistry_RegisterAdapterAndLookup(t *testing.T) {
 		t.Fatalf("NewUnaryInvocationAdapter: %v", err)
 	}
 
-	if err := exec.RegisterAdapter(adapter); err != nil {
+	if err := reg.RegisterAdapter(adapter); err != nil {
 		t.Fatalf("RegisterAdapter: %v", err)
 	}
 
-	found, ok := exec.Lookup("greet")
+	found, ok := reg.LookupAdapter("greet")
 	if !ok {
 		t.Fatal("expected to find registered adapter")
 	}
@@ -44,9 +42,8 @@ func TestExecutableRegistry_RegisterAdapterAndLookup(t *testing.T) {
 	}
 }
 
-func TestExecutableRegistry_RegisterAdapter_RejectsUnregisteredCallable(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	exec := binding.NewExecutableRegistry(callables)
+func TestRegistry_RegisterAdapter_RejectsUnregisteredCallable(t *testing.T) {
+	reg := binding.NewRegistry()
 
 	desc := schema.CallableDesc{
 		Name:       "unregistered",
@@ -61,19 +58,17 @@ func TestExecutableRegistry_RegisterAdapter_RejectsUnregisteredCallable(t *testi
 		t.Fatalf("NewUnaryInvocationAdapter: %v", err)
 	}
 
-	if err := exec.RegisterAdapter(adapter); err == nil {
+	if err := reg.RegisterAdapter(adapter); err == nil {
 		t.Fatal("expected error for unregistered callable, got nil")
 	}
 }
 
-func TestExecutableRegistry_RegisterAdapter_RejectsDuplicateAdapter(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	desc, err := callables.RegisterGoFunction("greet", greet)
+func TestRegistry_RegisterAdapter_RejectsDuplicateAdapter(t *testing.T) {
+	reg := binding.NewRegistry()
+	desc, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("RegisterGoFunction: %v", err)
 	}
-
-	exec := binding.NewExecutableRegistry(callables)
 
 	adapter1, err := binding.NewUnaryInvocationAdapter(desc, func(args []any) (any, error) {
 		return nil, nil
@@ -81,7 +76,7 @@ func TestExecutableRegistry_RegisterAdapter_RejectsDuplicateAdapter(t *testing.T
 	if err != nil {
 		t.Fatalf("NewUnaryInvocationAdapter: %v", err)
 	}
-	if err := exec.RegisterAdapter(adapter1); err != nil {
+	if err := reg.RegisterAdapter(adapter1); err != nil {
 		t.Fatalf("first RegisterAdapter: %v", err)
 	}
 
@@ -92,29 +87,27 @@ func TestExecutableRegistry_RegisterAdapter_RejectsDuplicateAdapter(t *testing.T
 		t.Fatalf("NewUnaryInvocationAdapter (2): %v", err)
 	}
 
-	if err := exec.RegisterAdapter(adapter2); err == nil {
+	if err := reg.RegisterAdapter(adapter2); err == nil {
 		t.Fatal("expected error for duplicate adapter registration, got nil")
 	}
 }
 
-func TestExecutableRegistry_Invoke(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	_, err := callables.RegisterGoFunction("greet", greet)
+func TestRegistry_Invoke(t *testing.T) {
+	reg := binding.NewRegistry()
+	_, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("RegisterGoFunction: %v", err)
 	}
-
-	exec := binding.NewExecutableRegistry(callables)
 
 	adapter, err := binding.NewGoFunctionAdapter("greet", greet)
 	if err != nil {
 		t.Fatalf("NewGoFunctionAdapter: %v", err)
 	}
-	if err := exec.RegisterAdapter(adapter); err != nil {
+	if err := reg.RegisterAdapter(adapter); err != nil {
 		t.Fatalf("RegisterAdapter: %v", err)
 	}
 
-	outcome, err := exec.Invoke(binding.InvocationRequest{
+	outcome, err := reg.Invoke(binding.InvocationRequest{
 		Callable: "greet",
 		Stage:    binding.InvocationStageUnary,
 		Args:     []any{1, "Alice"},
@@ -127,11 +120,10 @@ func TestExecutableRegistry_Invoke(t *testing.T) {
 	}
 }
 
-func TestExecutableRegistry_Invoke_UnregisteredCallable(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	exec := binding.NewExecutableRegistry(callables)
+func TestRegistry_Invoke_UnregisteredCallable(t *testing.T) {
+	reg := binding.NewRegistry()
 
-	_, err := exec.Invoke(binding.InvocationRequest{
+	_, err := reg.Invoke(binding.InvocationRequest{
 		Callable: "missing",
 		Stage:    binding.InvocationStageUnary,
 	})
@@ -140,17 +132,16 @@ func TestExecutableRegistry_Invoke_UnregisteredCallable(t *testing.T) {
 	}
 }
 
-func TestExecutableRegistry_Invoke_NoAdapter(t *testing.T) {
-	callables := binding.NewCallableRegistry()
-	_, err := callables.RegisterGoFunction("greet", greet)
+func TestRegistry_Invoke_NoAdapter(t *testing.T) {
+	reg := binding.NewRegistry()
+	_, err := reg.RegisterGoFunction("greet", greet)
 	if err != nil {
 		t.Fatalf("RegisterGoFunction: %v", err)
 	}
 
-	exec := binding.NewExecutableRegistry(callables)
 	// No adapter registered
 
-	_, err = exec.Invoke(binding.InvocationRequest{
+	_, err = reg.Invoke(binding.InvocationRequest{
 		Callable: "greet",
 		Stage:    binding.InvocationStageUnary,
 		Args:     []any{1, "Alice"},

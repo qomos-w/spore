@@ -219,8 +219,8 @@ func TestRegistryRegistrationValidation(t *testing.T) {
 		}(), "missing descriptor"},
 	}
 	for _, tc := range cases {
-		reg := binding.NewMemoryCapabilityRegistry()
-		err := reg.Register(tc.cap)
+		reg := binding.NewRegistry()
+		err := reg.RegisterCapability(tc.cap)
 		if err == nil {
 			t.Fatalf("%s: expected error", tc.name)
 		}
@@ -361,7 +361,7 @@ func TestInvokeGoFunctionForHostProxy(t *testing.T) {
 	}
 }
 
-func TestExecutableRegistryForEachAdapter(t *testing.T) {
+func TestRegistryForEachAdapter(t *testing.T) {
 	sb := binding.NewScriptBinding()
 	if err := sb.BindFunction("greet", greet); err != nil {
 		t.Fatalf("BindFunction: %v", err)

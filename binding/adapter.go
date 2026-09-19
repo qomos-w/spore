@@ -2,19 +2,30 @@ package binding
 
 import (
 	"fmt"
-	"github.com/qomos-w/spore/invoke"
 	"math"
 	"reflect"
 	"runtime/debug"
 
+	"github.com/qomos-w/spore/diagnostics"
+	"github.com/qomos-w/spore/invoke"
 	"github.com/qomos-w/spore/schema"
 )
 
-type localInvocationAdapter struct {
-	desc  schema.CallableDesc
-	unary func(args []any) (any, error)
-	next  func(args []any) (any, error)
-	final func(args []any) (any, error)
+// callableAdapter is the single ExecutableAdapter implementation in the
+// binding plane.
+//
+// It unifies the three layers that previously bridged executables into the
+// registry: the reflected-Go-function / unary / streaming adapter, the
+// capability-callable wrapper, and the capability-to-executable bridge. A
+// capability callable is now just another shape handled by the same adapter
+// (capability != nil), so there is exactly one Invoke/validation path and one
+// place where invocation outcomes are built.
+type callableAdapter struct {
+	desc       schema.CallableDesc
+	unary      func(args []any) (any, error)
+	next       func(args []any) (any, error)
+	final      func(args []any) (any, error)
+	capability CapabilityCallable // non-nil for capability-backed adapters
 }
 
 // NewUnaryInvocationAdapter creates an adapter for a unary callable.
@@ -28,7 +39,7 @@ func NewUnaryInvocationAdapter(desc schema.CallableDesc, fn func(args []any) (an
 	if fn == nil {
 		return nil, fmt.Errorf("unary callable %q requires handler", desc.Name)
 	}
-	return &localInvocationAdapter{desc: schema.CloneCallableDesc(desc), unary: fn}, nil
+	return &callableAdapter{desc: schema.CloneCallableDesc(desc), unary: fn}, nil
 }
 
 // NewGoFunctionAdapter creates an adapter from a Go function value.
@@ -69,14 +80,38 @@ func NewStreamingInvocationAdapter(desc schema.CallableDesc, next func(args []an
 	if desc.Streaming.Final != nil && final == nil {
 		return nil, fmt.Errorf("streaming callable %q requires final handler", desc.Name)
 	}
-	return &localInvocationAdapter{desc: schema.CloneCallableDesc(desc), next: next, final: final}, nil
+	return &callableAdapter{desc: schema.CloneCallableDesc(desc), next: next, final: final}, nil
 }
 
-func (a *localInvocationAdapter) Callable() schema.CallableDesc {
+// NewCapabilityExecutableAdapter exposes a capability callable as a flattened
+// binding callable. The returned adapter is the same callableAdapter type as
+// every other adapter; the capability callable is simply its executable body.
+func NewCapabilityExecutableAdapter(capabilityName string, callable CapabilityCallable) (ExecutableAdapter, error) {
+	if capabilityName == "" {
+		return nil, fmt.Errorf("capability name cannot be empty")
+	}
+	if callable == nil {
+		return nil, fmt.Errorf("capability %q requires callable", capabilityName)
+	}
+	local := callable.Desc()
+	if local.Name == "" {
+		return nil, fmt.Errorf("capability %q callable name cannot be empty", capabilityName)
+	}
+	if normalizedCallableMode(local) != schema.CallableModeUnary {
+		return nil, fmt.Errorf("capability %q callable %q must be unary", capabilityName, local.Name)
+	}
+	flattened := capabilityCallableDesc(capabilityName, local)
+	return &callableAdapter{
+		desc:       flattened,
+		capability: callable,
+	}, nil
+}
+
+func (a *callableAdapter) Callable() schema.CallableDesc {
 	return schema.CloneCallableDesc(a.desc)
 }
 
-func (a *localInvocationAdapter) Invoke(req InvocationRequest) (InvocationOutcome, error) {
+func (a *callableAdapter) Invoke(req InvocationRequest) (InvocationOutcome, error) {
 	if req.Callable != a.desc.Name {
 		return InvocationOutcome{}, fmt.Errorf("adapter for %q cannot handle %q", a.desc.Name, req.Callable)
 	}
@@ -86,7 +121,13 @@ func (a *localInvocationAdapter) Invoke(req InvocationRequest) (InvocationOutcom
 	if err := ValidateInvocationArgs(a.desc, req.Args); err != nil {
 		return InvocationOutcome{}, err
 	}
+	if a.capability != nil {
+		return a.invokeCapability(req)
+	}
+	return a.invokeHandler(req)
+}
 
+func (a *callableAdapter) invokeHandler(req InvocationRequest) (InvocationOutcome, error) {
 	var (
 		payload any
 		callErr error
@@ -123,6 +164,46 @@ func (a *localInvocationAdapter) Invoke(req InvocationRequest) (InvocationOutcom
 		return InvocationOutcome{}, err
 	}
 	return NewInvocationOutcome(result, payload)
+}
+
+func (a *callableAdapter) invokeCapability(req InvocationRequest) (InvocationOutcome, error) {
+	var input any
+	if len(req.Args) == 1 {
+		input = req.Args[0]
+	} else {
+		input = req.Args
+	}
+	payload, err := a.capability.Invoke(req.Context, input)
+	if err != nil {
+		diag := diagnostics.FromError(err, diagnostics.Descriptor{
+			Category: diagnostics.CategoryHost,
+			Code:     "native_call_failed",
+			Path:     "binding/capability/invoke",
+			Message:  err.Error(),
+		})
+		result, descErr := NewInvocationErrorDescWithDiagnostic(a.desc, req.Stage, diag)
+		if descErr != nil {
+			return InvocationOutcome{}, descErr
+		}
+		return NewInvocationOutcome(result, nil)
+	}
+	result, err := DescribeInvocationResult(a.desc, req.Stage)
+	if err != nil {
+		return InvocationOutcome{}, err
+	}
+	return NewInvocationOutcome(result, payload)
+}
+
+// capabilityCallableDesc returns the flattened descriptor a capability callable
+// is exposed under in the callable/executable planes.
+func capabilityCallableDesc(capabilityName string, local schema.CallableDesc) schema.CallableDesc {
+	flattened := schema.CloneCallableDesc(local)
+	flattened.Name = capabilityCallableName(capabilityName, local.Name)
+	return flattened
+}
+
+func capabilityCallableName(capabilityName, callableName string) string {
+	return capabilityName + "." + callableName
 }
 
 var errorType = reflect.TypeOf((*error)(nil)).Elem()

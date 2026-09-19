@@ -2171,7 +2171,8 @@ func TestMilestone_Phase13_ExternalConsumerCannotAccessVMInternals(t *testing.T)
 		t.Fatalf("Invoke: %v", err)
 	}
 
-	// ScriptBinding only exposes Callables (CallableRegistry) and Executors (ExecutableRegistry).
+	// ScriptBinding only exposes the engine contract views over the unified
+	// registry: Callables (invoke.CallableSource) and Executors (invoke.ExecutorSource).
 	// No VM, no chunks, no interpreter, no frames are accessible.
 	if sb.Callables == nil {
 		t.Fatal("expected Callables to be non-nil")
