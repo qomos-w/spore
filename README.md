@@ -145,6 +145,7 @@ present one symmetric public surface to embedders.
 | `ts/` | TypeScript runtime mirror |
 | `gen/render/` | Public code-generation façade (four generators) |
 | `benchmarks/` | Comparative benchmarks against goja / lua / tengo |
+| `scripts/` | Repo tooling: versioned git hooks (pre-push release guard) |
 | `internal/script/` | Compiler, VM, and frontend (internal; not imported by hosts) |
 
 ## Documentation

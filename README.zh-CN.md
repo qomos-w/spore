@@ -130,6 +130,7 @@ Schema 是跨语言契约的唯一事实来源，`cmd/` 生成器把 schema 清�
 | `ts/` | TypeScript 运行时镜像 |
 | `gen/render/` | 公开代码生成门面（四个生成器） |
 | `benchmarks/` | 与 goja / lua / tengo 的对比基准 |
+| `scripts/` | 仓库工具：版本化 git 钩子（pre-push 发布护栏） |
 | `internal/script/` | 编译器、VM、前端（internal，宿主不导入） |
 
 ## 文档
