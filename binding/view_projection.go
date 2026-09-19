@@ -225,18 +225,12 @@ func projectMapField(fd schema.FieldDesc, fv reflect.Value) (any, error) {
 	return fv.Interface(), nil
 }
 
-// isOrderedMapType detects an OrderedMap or SortedOrderedMap by checking its
-// package path and type name prefix, using the same pattern as
-// schema/describe.go's describeOrderedMapType without importing the concrete
-// type. Both variants share the same public surface (Entries/Set/Delete)
+// isOrderedMapType reports whether t is an OrderedMap or SortedOrderedMap,
+// delegating to schema.IsOrderedMapType — the single authoritative
+// detection. Both variants share the same public surface (Entries/Set/Delete)
 // and are handled identically by the binding layer.
 func isOrderedMapType(t reflect.Type) bool {
-	if t.PkgPath() != "github.com/qomos-w/spore/schema" {
-		return false
-	}
-	name := t.Name()
-	return (len(name) > 11 && name[:11] == "OrderedMap[") ||
-		(len(name) > 17 && name[:17] == "SortedOrderedMap[")
+	return schema.IsOrderedMapType(t)
 }
 
 // projectOrderedMapEntries calls Entries() on an OrderedMap via reflection

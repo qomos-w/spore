@@ -337,7 +337,7 @@ func DescribeOrderedMapType(typ reflect.Type) (TypeDesc, bool, error) {
 	if orderedType.Kind() == reflect.Pointer {
 		orderedType = orderedType.Elem()
 	}
-	if orderedType.PkgPath() != "github.com/qomos-w/spore/schema" || !(strings.HasPrefix(orderedType.Name(), "OrderedMap[") || strings.HasPrefix(orderedType.Name(), "SortedOrderedMap[")) {
+	if !IsOrderedMapType(orderedType) {
 		return TypeDesc{}, false, nil
 	}
 

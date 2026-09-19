@@ -2,9 +2,24 @@ package schema
 
 import (
 	"cmp"
+	"reflect"
 	"slices"
 	"sort"
 )
+
+// IsOrderedMapType reports whether t is an OrderedMap, SortedOrderedMap, or
+// other Entries()-bearing variant defined by this package. Boundary layers
+// (binding, transport) must use this single authoritative detection instead
+// of re-implementing package-path and type-name-prefix matching.
+// Contract: public semantic contract — OrderedMap detection for boundary layers.
+func IsOrderedMapType(t reflect.Type) bool {
+	if t.PkgPath() != "github.com/qomos-w/spore/schema" {
+		return false
+	}
+	name := t.Name()
+	return (len(name) > 11 && name[:11] == "OrderedMap[") ||
+		(len(name) > 17 && name[:17] == "SortedOrderedMap[")
+}
 
 type orderedKey interface {
 	~string |

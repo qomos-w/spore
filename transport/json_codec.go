@@ -392,18 +392,11 @@ func decodeErrorWithTypes(view View, path string, expected, actual string, forma
 }
 
 // isOrderedMapValue detects whether a reflect.Value is an OrderedMap
-// or SortedOrderedMap by checking its package path and type name prefix.
-// This uses the same detection pattern as schema/describe.go's
-// describeOrderedMapType without importing the schema package's concrete
-// type. Both variants share the same Entries() surface.
+// isOrderedMapValue reports whether v holds an OrderedMap or
+// SortedOrderedMap, delegating to schema.IsOrderedMapType — the single
+// authoritative detection. Both variants share the same Entries() surface.
 func isOrderedMapValue(v reflect.Value) bool {
-	t := v.Type()
-	if t.PkgPath() != "github.com/qomos-w/spore/schema" {
-		return false
-	}
-	name := t.Name()
-	return (len(name) > 11 && name[:11] == "OrderedMap[") ||
-		(len(name) > 17 && name[:17] == "SortedOrderedMap[")
+	return schema.IsOrderedMapType(v.Type())
 }
 
 // orderedMapEntries calls Entries() on an OrderedMap via reflection and

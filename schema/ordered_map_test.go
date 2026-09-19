@@ -1,6 +1,31 @@
 package schema
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestIsOrderedMapTypeContract(t *testing.T) {
+	om := NewOrderedMap[string, int]()
+	som := NewSortedOrderedMap[string, int](func(a, b string) int { return len(a) - len(b) })
+	var plain OrderedMap[string, int]
+	cases := []struct {
+		name string
+		typ  reflect.Type
+		want bool
+	}{
+		{"OrderedMap value", reflect.TypeOf(plain), true},
+		{"SortedOrderedMap value", reflect.TypeOf(*som), true},
+		{"pointer to OrderedMap", reflect.TypeOf(om), false},
+		{"plain map", reflect.TypeOf(map[string]int{}), false},
+		{"string", reflect.TypeOf(""), false},
+	}
+	for _, tc := range cases {
+		if got := IsOrderedMapType(tc.typ); got != tc.want {
+			t.Errorf("%s: IsOrderedMapType = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
 
 func TestOrderedMap_SetAndEntriesPreserveInsertionOrder(t *testing.T) {
 	m := NewOrderedMap[string, int]()

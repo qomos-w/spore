@@ -1322,8 +1322,8 @@ func (rt *Runtime) invokeHostInterfaceMethod(receiver vm.Handle, methodName stri
 	if !ok {
 		panic(fmt.Sprintf("host interface receiver not found for handle %v", receiver))
 	}
-	method := reflect.ValueOf(obj.Target).MethodByName(exportedMethodName(methodName))
-	if !method.IsValid() {
+	method, ok := lookupHostMethod(obj.Target, methodName)
+	if !ok {
 		panic(fmt.Sprintf("host interface method %q not found on %T", methodName, obj.Target))
 	}
 	goArgs := make([]any, len(args))
