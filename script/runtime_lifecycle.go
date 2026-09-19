@@ -6,8 +6,6 @@ import (
 	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/internal/script/bytecode"
 	"github.com/qomos-w/spore/internal/script/frontend"
-	"github.com/qomos-w/spore/internal/script/vm"
-	"github.com/qomos-w/spore/schema"
 )
 
 // This file holds the Runtime lifecycle: loading, reloading, cloning, resetting
@@ -253,10 +251,7 @@ func (rt *Runtime) Close() error {
 	rt.boundInterfaces = nil
 	rt.boundTypeAliases = nil
 	rt.pendingNamespaces = nil
-	rt.hostInterfaceClasses = nil
-	rt.hostInterfaceObjects = nil
-	rt.hostInterfaceHandles = nil
-	rt.hostInterfaceBindings = nil
+	rt.hostIface.clear()
 	rt.bindingsCommitted = false
 	return nil
 }
@@ -298,22 +293,19 @@ func (rt *Runtime) Clone() (*Runtime, error) {
 	}
 
 	cloned := &Runtime{
-		binding:               sb,
-		frontend:              fe,
-		evaluator:             eval,
-		boundFuncs:            make(map[string]BoundFunction),
-		boundValues:           make(map[string]BoundValue),
-		boundObjects:          make(map[string]BoundStruct),
-		boundInterfaces:       make(map[string]BoundInterface),
-		boundTypeAliases:      make(map[string]BoundTypeAlias),
-		pendingNamespaces:     make(map[string]*binding.CapabilityBuilder),
-		moduleResolver:        rt.moduleResolver,
-		hostInterfaceClasses:  make(map[string]hostInterfaceClass),
-		hostInterfaceObjects:  make(map[uint64]hostInterfaceObject),
-		hostInterfaceHandles:  make(map[vm.Handle]uint64),
-		hostInterfaceBindings: make(map[hostInterfaceBindingKey]uint64),
-		vmHeapBytes:           rt.vmHeapBytes,
-		vmHeapSlots:           rt.vmHeapSlots,
+		binding:           sb,
+		frontend:          fe,
+		evaluator:         eval,
+		boundFuncs:        make(map[string]BoundFunction),
+		boundValues:       make(map[string]BoundValue),
+		boundObjects:      make(map[string]BoundStruct),
+		boundInterfaces:   make(map[string]BoundInterface),
+		boundTypeAliases:  make(map[string]BoundTypeAlias),
+		pendingNamespaces: make(map[string]*binding.CapabilityBuilder),
+		moduleResolver:    rt.moduleResolver,
+		hostIface:         rt.hostIface.clone(),
+		vmHeapBytes:       rt.vmHeapBytes,
+		vmHeapSlots:       rt.vmHeapSlots,
 	}
 
 	// Copy pending namespace builders so the clone gets the same bindings.
@@ -336,21 +328,6 @@ func (rt *Runtime) Clone() (*Runtime, error) {
 	}
 	for k, v := range rt.boundTypeAliases {
 		cloned.boundTypeAliases[k] = v
-	}
-	for id, obj := range rt.hostInterfaceObjects {
-		cloned.hostInterfaceObjects[id] = hostInterfaceObject{
-			ID:             obj.ID,
-			Namespace:      obj.Namespace,
-			Name:           obj.Name,
-			InterfaceDesc:  schema.CloneInterfaceDesc(obj.InterfaceDesc),
-			Target:         obj.Target,
-			ProxyClassName: obj.ProxyClassName,
-			Handle:         vm.InvalidHandle,
-			Pending:        true,
-		}
-	}
-	for k, v := range rt.hostInterfaceBindings {
-		cloned.hostInterfaceBindings[k] = v
 	}
 
 	// Re-commit bindings into the fresh backing.
@@ -400,15 +377,9 @@ func (rt *Runtime) Reset() error {
 	rt.rootModule = ""
 	rt.bindingsCommitted = false
 
-	// Reset host interface proxy state so that proxy classes and handles
-	// are re-registered against the fresh VM when a module is next loaded.
-	for id, obj := range rt.hostInterfaceObjects {
-		obj.Handle = vm.InvalidHandle
-		obj.Pending = true
-		rt.hostInterfaceObjects[id] = obj
-	}
-	rt.hostInterfaceHandles = make(map[vm.Handle]uint64)
-	rt.hostInterfaceClasses = make(map[string]hostInterfaceClass)
+	// The ledger's durable index (objects + bindings) is preserved; only the
+	// VM-scoped projection is stale. It is invalidated in one step when the
+	// fresh evaluator's VM is bound below — no per-object rewrite is needed.
 
 	// Re-commit existing bindings into the fresh backing.
 	if err := rt.commitPendingBindings(); err != nil {

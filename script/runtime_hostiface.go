@@ -2,9 +2,7 @@ package script
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
-	"sync/atomic"
 
 	"github.com/qomos-w/spore/binding"
 	"github.com/qomos-w/spore/internal/script/bytecode"
@@ -13,21 +11,22 @@ import (
 )
 
 // This file holds the Runtime host-interface surface: interface classes,
-// instance objects, handle plumbing, and method dispatch.
+// instance objects, handle plumbing, and method dispatch. All proxy state
+// lives in the single hostInterfaceLedger (hostiface_ledger.go); the code here
+// is a Runtime-level view over it, so Reset/Clone/Close never enumerate or
+// rewrite the durable object set.
 
 type hostInterfaceBindingKey struct {
 	Namespace string
 	Name      string
 }
 
-type hostInterfaceClass struct {
-	Namespace      string
-	Name           string
-	InterfaceDesc  schema.InterfaceDesc
-	ProxyClassName string
-	ClassID        uint32
-}
-
+// hostInterfaceObject is the durable record of one host interface proxy target.
+// It carries only VM-independent facts — identity (ID), symbol (Namespace /
+// Name), shape (InterfaceDesc) and payload (Target). Live state (the proxy
+// handle, and whether the proxy is currently registered) is deliberately absent:
+// it belongs to the VM-scoped projection in hostInterfaceLedger, so discarding
+// the execution VM cannot leave a stale field behind on the durable record.
 type hostInterfaceObject struct {
 	ID             uint64
 	Namespace      string
@@ -35,21 +34,20 @@ type hostInterfaceObject struct {
 	InterfaceDesc  schema.InterfaceDesc
 	Target         any
 	ProxyClassName string
-	Handle         vm.Handle
-	Pending        bool
 }
 
-func (rt *Runtime) ensureHostInterfaceClass(namespace, name string, desc schema.InterfaceDesc) error {
+// ensureHostInterfaceClass makes the interface definition and proxy class for
+// (namespace, name) exist on the current execution VM, and returns the proxy
+// class ID and class name. It is idempotent and reads the VM's own class/iface
+// registries as the source of truth — there is no separate class index to keep
+// in sync or to invalidate, because the registries die with the VM.
+func (rt *Runtime) ensureHostInterfaceClass(namespace, name string, desc schema.InterfaceDesc) (uint32, string, error) {
 	if rt == nil || rt.evaluator == nil {
-		return fmt.Errorf("runtime is not initialized")
-	}
-	key := namespace + "/" + name
-	if _, ok := rt.hostInterfaceClasses[key]; ok {
-		return nil
+		return 0, "", fmt.Errorf("runtime is not initialized")
 	}
 	v := rt.evaluator.VM()
 	if v == nil {
-		return fmt.Errorf("runtime VM is not initialized")
+		return 0, "", fmt.Errorf("runtime VM is not initialized")
 	}
 	if v.IfaceReg().GetInterfaceByName(name) == nil {
 		methods := make([]vm.InterfaceMethodSig, len(desc.Methods))
@@ -68,177 +66,110 @@ func (rt *Runtime) ensureHostInterfaceClass(namespace, name string, desc schema.
 				return rt.invokeHostInterfaceMethod(receiver, methodName, args)
 			})
 		}
-		classID := v.ClassReg().RegisterClass(class)
+		v.ClassReg().RegisterClass(class)
 		class = v.ClassReg().GetClassByName(proxyClassName)
 		if class == nil {
-			return fmt.Errorf("proxy class %q registration failed", proxyClassName)
+			return 0, "", fmt.Errorf("proxy class %q registration failed", proxyClassName)
 		}
-		v.IfaceReg().RegisterImplementation(proxyClassName, name)
-		rt.hostInterfaceClasses[key] = hostInterfaceClass{
-			Namespace:      namespace,
-			Name:           name,
-			InterfaceDesc:  schema.CloneInterfaceDesc(desc),
-			ProxyClassName: proxyClassName,
-			ClassID:        classID,
-		}
-		return nil
 	}
 	v.IfaceReg().RegisterImplementation(proxyClassName, name)
-	rt.hostInterfaceClasses[key] = hostInterfaceClass{
-		Namespace:      namespace,
-		Name:           name,
-		InterfaceDesc:  schema.CloneInterfaceDesc(desc),
-		ProxyClassName: proxyClassName,
-		ClassID:        class.ID(),
-	}
-	return nil
+	return class.ID(), proxyClassName, nil
 }
 
+// registerHostInterfaceObject guarantees a live proxy on the current execution
+// VM for (namespace, name) backed by target, and returns its durable record.
+//
+// The ledger invariant is "one record per bound (symbol, target)": a matching
+// live proxy is reused as-is, a matching pending record is adopted (given a
+// handle) rather than duplicated, and only a genuinely new target mints a fresh
+// record. That keeps finalize idempotent and leaves no orphaned records behind
+// when a proxy is re-registered after a VM swap.
 func (rt *Runtime) registerHostInterfaceObject(namespace, name string, desc schema.InterfaceDesc, target any) (hostInterfaceObject, error) {
-	if err := rt.ensureHostInterfaceClass(namespace, name, desc); err != nil {
+	classID, proxyClassName, err := rt.ensureHostInterfaceClass(namespace, name, desc)
+	if err != nil {
 		return hostInterfaceObject{}, err
 	}
-	classInfo := rt.hostInterfaceClasses[namespace+"/"+name]
 	v := rt.evaluator.VM()
 	if v == nil {
 		return hostInterfaceObject{}, fmt.Errorf("runtime VM is not initialized")
 	}
+	l := &rt.hostIface
 	key := hostInterfaceBindingKey{Namespace: namespace, Name: name}
-	if id, ok := rt.hostInterfaceBindings[key]; ok {
-		if existing, exists := rt.hostInterfaceObjects[id]; exists {
-			if !existing.Pending && existing.Handle != vm.InvalidHandle && reflect.DeepEqual(existing.Target, target) {
-				return existing, nil
-			}
-			// Target differs — create a fresh object instead of overwriting.
-			// The old object remains valid via its existing handle.
-		}
-	}
-	if existing, ok := rt.lookupHostInterfaceObjectByTarget(namespace, name, target); ok && !existing.Pending {
+
+	if existing, ok := l.lookupByTarget(namespace, name, target, true); ok {
 		return existing, nil
 	}
-	handle := v.CreateObject(classInfo.ClassID)
+	obj, ok := l.lookupByTarget(namespace, name, target, false)
+	if !ok {
+		id := l.allocID()
+		obj = hostInterfaceObject{
+			ID:             id,
+			Namespace:      namespace,
+			Name:           name,
+			InterfaceDesc:  schema.CloneInterfaceDesc(desc),
+			Target:         target,
+			ProxyClassName: proxyClassName,
+		}
+		l.objects[id] = obj
+	}
+	handle := v.CreateObject(classID)
 	if handle == vm.InvalidHandle {
 		return hostInterfaceObject{}, fmt.Errorf("proxy object allocation failed for %s.%s", namespace, name)
 	}
-	id := atomic.AddUint64(&rt.nextHostInterfaceID, 1)
-	obj := hostInterfaceObject{
-		ID:             id,
-		Namespace:      namespace,
-		Name:           name,
-		InterfaceDesc:  schema.CloneInterfaceDesc(desc),
-		Target:         target,
-		ProxyClassName: classInfo.ProxyClassName,
-		Handle:         handle,
-		Pending:        false,
-	}
-	rt.hostInterfaceObjects[id] = obj
-	rt.hostInterfaceHandles[handle] = id
-	rt.hostInterfaceBindings[hostInterfaceBindingKey{Namespace: namespace, Name: name}] = id
+	l.handles[handle] = obj.ID
+	l.bindings[key] = obj.ID
 	return obj, nil
 }
 
 // RegisterHostInterfaceInstance registers an additional runtime instance of a
-// previously-bound host interface. The interface class must already exist
-// (created by BindInterfaceObject); this call only allocates a new proxy
-// object handle for the given target.
+// previously-bound host interface. The symbol must already be bound to an
+// interface object (created by BindInterfaceObject); this call only allocates a
+// new proxy object handle for the given target. The precondition is the durable
+// symbol binding, not a VM-scoped class cache, so an instance may also be
+// registered after a Reset — the proxy class is re-created on the fresh VM.
 func (rt *Runtime) RegisterHostInterfaceInstance(namespace, name string, target any) error {
 	if target == nil {
 		return fmt.Errorf("interface target cannot be nil")
 	}
-	classInfo, ok := rt.hostInterfaceClasses[namespace+"/"+name]
+	bound, ok := rt.hostIface.lookupBound(namespace, name)
 	if !ok {
 		return fmt.Errorf("interface %s.%s has not been registered", namespace, name)
 	}
-	_, err := rt.registerHostInterfaceObject(namespace, name, classInfo.InterfaceDesc, target)
+	_, err := rt.registerHostInterfaceObject(namespace, name, bound.InterfaceDesc, target)
 	return err
-}
-
-func (rt *Runtime) lookupHostInterfaceObjectByTarget(namespace, name string, target any) (hostInterfaceObject, bool) {
-	for _, obj := range rt.hostInterfaceObjects {
-		if obj.Namespace == namespace && obj.Name == name && reflect.DeepEqual(obj.Target, target) {
-			return obj, true
-		}
-	}
-	return hostInterfaceObject{}, false
 }
 
 func (rt *Runtime) hostInterfaceObjectForHandle(handle vm.Handle) (hostInterfaceObject, bool) {
 	if rt == nil {
 		return hostInterfaceObject{}, false
 	}
-	id, ok := rt.hostInterfaceHandles[handle]
-	if !ok {
-		return hostInterfaceObject{}, false
-	}
-	obj, ok := rt.hostInterfaceObjects[id]
-	return obj, ok
-}
-
-func (rt *Runtime) lookupBoundHostInterfaceObject(namespace, name string) (hostInterfaceObject, bool) {
-	if rt == nil {
-		return hostInterfaceObject{}, false
-	}
-	id, ok := rt.hostInterfaceBindings[hostInterfaceBindingKey{Namespace: namespace, Name: name}]
-	if !ok {
-		return hostInterfaceObject{}, false
-	}
-	obj, ok := rt.hostInterfaceObjects[id]
-	return obj, ok
-}
-
-// markHostInterfaceRoots is the GC root provider that keeps host interface
-// proxy objects live. Proxy objects are allocated in the VM heap via
-// CreateObject but are only referenced from the Runtime's handle table, which
-// the VM GC cannot see — so without this provider sustained allocation
-// reclaims a proxy, the handle is reused, and method dispatch panics with
-// "object class not found".
-func (rt *Runtime) markHostInterfaceRoots(visit func(vm.Value)) {
-	if rt == nil {
-		return
-	}
-	for h := range rt.hostInterfaceHandles {
-		visit(vm.EncodeHandle(h))
-	}
+	return rt.hostIface.objectForHandle(handle)
 }
 
 // attachHostIfaceRoots subscribes the host-interface root provider to the
-// evaluator's VM lifecycle: it registers on the current VM immediately and
-// re-registers on every VM swap (each CompileLoweredProgram builds a fresh
-// VM, discarding providers attached to the old one). Wiring this at every
-// evaluator construction path (NewRuntimeWith, Clone, Reset) makes
-// "host-bound objects stay rooted for the RT lifetime" a construction-time
-// guarantee instead of call-site discipline at bind/finalize time.
+// evaluator's VM lifecycle. The subscription fires immediately for the current
+// VM and again on every VM swap (each CompileLoweredProgram builds a fresh VM,
+// discarding providers attached to the old one), so "host-bound objects stay
+// rooted for the RT lifetime" is a construction-time guarantee rather than
+// call-site discipline at bind/finalize time. The same callback is the single
+// point at which the ledger's VM-scoped projection is invalidated.
 func (rt *Runtime) attachHostIfaceRoots(eval *bytecode.VMEvaluator) {
-	eval.OnVMReplaced(func(v *vm.VM) {
-		rt.hostIfaceRootProviderID = v.AddRootProvider(rt.markHostInterfaceRoots)
-		rt.hostIfaceRootProviderVM = v
-	})
-}
-
-func (rt *Runtime) lookupHostInterfaceObjectForValue(value any) (hostInterfaceObject, bool) {
-	for _, obj := range rt.hostInterfaceObjects {
-		if obj.Pending || obj.Handle == vm.InvalidHandle {
-			continue
-		}
-		if reflect.DeepEqual(obj.Target, value) {
-			return obj, true
-		}
-	}
-	return hostInterfaceObject{}, false
+	eval.OnVMReplaced(rt.hostIface.bindVM)
 }
 
 func (rt *Runtime) hostInterfaceHandleForValue(value any) (vm.Handle, bool) {
-	obj, ok := rt.lookupHostInterfaceObjectForValue(value)
-	if !ok || obj.Pending || obj.Handle == vm.InvalidHandle {
-		return vm.InvalidHandle, false
-	}
-	return obj.Handle, true
+	return rt.hostIface.handleForValue(value)
 }
 
+// HostInterfaceHandleForValue returns the live proxy handle bound to value, if
+// any. It reports false while the matching proxy is pending (bound but not yet
+// registered against the execution VM).
 func (rt *Runtime) HostInterfaceHandleForValue(value any) (vm.Handle, bool) {
 	return rt.hostInterfaceHandleForValue(value)
 }
 
+// HostInterfaceObjectForHandle returns the host target behind a live proxy
+// handle.
 func (rt *Runtime) HostInterfaceObjectForHandle(handle vm.Handle) (any, bool) {
 	obj, ok := rt.hostInterfaceObjectForHandle(handle)
 	if !ok {
