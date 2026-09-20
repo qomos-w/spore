@@ -7,8 +7,9 @@
 //   2. script-driven Fleet.spawn_proxy returns a live Unit proxy whose
 //      methods mutate the same component storage;
 //   3. disposing a host makes subsequent fleet- AND proxy-side method
-//      calls surface as a host-interface panic carrying the
-//      "stale or unknown id" error (script/runtime.go:1315);
+//      calls report the "stale or unknown id" error as a structured
+//      runtime error (script/runtime.go:1315 converts a host method
+//      error into the stable native_call_failed diagnostic);
 //   4. host entities and plain ECS entities coexist in the same World
 //      query (the "same table / same Tick / same query" contract).
 //
@@ -18,7 +19,6 @@
 package ecsbind_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -285,15 +285,19 @@ export fun make_and_hp(x: double): int {
 }
 
 // ----------------------------------------------------------------------------
-// 4. Stale handle error convention: dispatch surfaces ErrStaleEntity as panic
+// 4. Stale handle error convention: dispatch surfaces ErrStaleEntity as a
+//    structured runtime error
 // ----------------------------------------------------------------------------
 
-// TestScript_StaleHandlesSurfacePanic confirms that calling Fleet.move
+// TestScript_StaleHandlesSurfaceStructuredError confirms that calling Fleet.move
 // / Fleet.hp on a disposed id, AND calling u.move after u.dispose on a
-// per-instance proxy, panics with the "stale or unknown id" error.
-// Script runtime (script/runtime.go:1315) deliberately converts host
-// method errors into panics; the test catches via defer/recover.
-func TestScript_StaleHandlesSurfacePanic(t *testing.T) {
+// per-instance proxy, reports the "stale or unknown id" error as a structured
+// runtime error. Host-interface method errors are Track 2 (recoverable)
+// conditions: the script runtime used to re-panic them into the host process
+// (tests then had to recover), and since the #29 error-model convergence they
+// arrive as Result.Error with the stable native_call_failed code while Call
+// itself never panics.
+func TestScript_StaleHandlesSurfaceStructuredError(t *testing.T) {
 	rt := newRuntime(t)
 	_, fleet, wb := newHostWorld(t)
 	bindFleetAndWorld(t, rt, fleet, wb)
@@ -341,17 +345,18 @@ export fun proxy_hp_after_dispose(x: double): int {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected host-interface panic from %s", tc.name)
-				}
-				if msg := fmt.Sprint(r); !strings.Contains(msg, "stale") {
-					t.Fatalf("panic message: want 'stale', got %q", msg)
-				}
-			}()
-			if _, err := rt.Call(tc.name, tc.args...); err != nil {
+			res, err := rt.Call(tc.name, tc.args...)
+			if err != nil {
 				t.Fatalf("Call %s: %v", tc.name, err)
+			}
+			if res.Error == nil {
+				t.Fatalf("%s: expected a structured host-interface error, got value %#v", tc.name, res.Value)
+			}
+			if got := res.Error.Diagnostic.Code; got != "native_call_failed" {
+				t.Fatalf("%s: diagnostic code = %q, want native_call_failed", tc.name, got)
+			}
+			if msg := res.Error.Diagnostic.Message; !strings.Contains(msg, "stale") {
+				t.Fatalf("%s: message: want 'stale', got %q", tc.name, msg)
 			}
 		})
 	}

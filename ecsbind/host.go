@@ -17,9 +17,10 @@
 //  3. Stale-handle error convention: every collection method and every
 //     per-instance method checks u.IsAlive() (Ref.IsAlive, runtime/ref.go:45)
 //     and returns ErrStaleEntity for stale/unknown ids. The script runtime
-//     surfaces the error as a host-interface panic
-//     (script/runtime.go:1315), which is the documented behaviour for
-//     error-returning host methods (ecsbind/ecsbind_test.go:TestScript_StaleIDPropagatesError).
+//     reports the error as a structured runtime error with the stable
+//     native_call_failed code (script/runtime_hostiface.go), which is the
+//     documented behaviour for error-returning host methods
+//     (ecsbind/ecsbind_test.go:TestScript_StaleIDPropagatesError).
 //
 //  4. Interop contract: the same World is shared with the World facade
 //     (ecsbind.WorldBinding). Host-registered entities appear in
@@ -149,10 +150,11 @@ func (u *UnitHost) Dispose() error {
 }
 
 // ErrStaleEntity is the canonical stale-handle error for host entity
-// operations. The script runtime converts non-nil errors returned from
-// host-interface methods into panics (script/runtime.go:1315), so script
-// callers see the same ErrStaleEntity signal surfaced as a panic. Go
-// callers can errors.Is against this sentinel.
+// operations. The script runtime reports non-nil errors returned from
+// host-interface methods as a structured runtime error carrying the stable
+// native_call_failed code (script/runtime_hostiface.go), so script callers
+// see the same ErrStaleEntity signal in Result.Error.Diagnostic rather than
+// as a panic. Go callers can errors.Is against this sentinel.
 //
 // ErrStaleEntity is implemented as a function (rather than a package
 // variable) so callers cannot mutate the shared sentinel across
@@ -436,7 +438,8 @@ func (f *HostFleet) LookUp(id string) (*UnitHost, bool) {
 //     (internal/script/bytecode/value_codec.go:anyToVMValueAtPath).
 //   - move / destroy are void on the script side. The Go methods return
 //     error so stale handles surface as ErrStaleEntity, which the
-//     script runtime surfaces as a panic (script/runtime.go:1315).
+//     script runtime reports as a structured native_call_failed runtime
+//     error (script/runtime_hostiface.go).
 //   - hp returns int. The Go method returns (int, error) so stale
 //     handles surface as ErrStaleEntity too.
 //   - count returns int.

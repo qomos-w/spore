@@ -806,19 +806,22 @@ export fun mutate_and_observe(): map<string, any> {
 
 // ----------------------------------------------------------------------------
 // 5. Host-side stale-handle contract end-to-end: script-driven dispose
-//    + Fleet.* follow-up call surfaces the ErrStaleEntity panic that
-//    script/runtime.go:1315 propagates. Catches regressions where the
-//    stale-handle convention slips through script binding.
+//    + Fleet.* follow-up call reports the ErrStaleEntity error through the
+//    structured runtime-error channel that the error-model convergence
+//    established. Catches regressions where the stale-handle convention
+//    slips through script binding.
 // ----------------------------------------------------------------------------
 
-// TestE2E_StaleHandlePanicEndToEnd is the integration-level safety net
-// for the host-entity binding idioms: after a Fleet.destroy call, any
-// Fleet.move / Fleet.hp on the same id must panic with "stale or
-// unknown id". Per-instance proxies (Unit.dispose then u.move) follow
-// the same contract. The World facade surfaces stale IDs as "not alive"
-// (no panic on destroy of an already-disposed entity; panic on
-// destroy of a never-existed entity).
-func TestE2E_StaleHandlePanicEndToEnd(t *testing.T) {
+// TestE2E_StaleHandleStructuredErrorEndToEnd is the integration-level safety
+// net for the host-entity binding idioms: after a Fleet.destroy call, any
+// Fleet.move / Fleet.hp on the same id must report the "stale or unknown id"
+// host error as a structured runtime error (Result.Error with code
+// native_call_failed), never as a panic — Call must not unwind into the host.
+// Per-instance proxies (Unit.dispose then u.move) follow the same contract.
+// The World facade surfaces stale IDs as "not alive" through the same channel
+// (no error on destroy of an already-disposed entity; error on destroy of a
+// never-existed entity).
+func TestE2E_StaleHandleStructuredErrorEndToEnd(t *testing.T) {
 	rt, err := script.NewRuntime()
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
@@ -885,18 +888,18 @@ export fun world_stale_destroy(): void {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("%s: expected panic, got nil", tc.name)
-				}
-				msg := fmt.Sprint(r)
-				if !strings.Contains(msg, tc.wantSubstr) {
-					t.Fatalf("%s: panic want substring %q, got %q", tc.name, tc.wantSubstr, msg)
-				}
-			}()
-			if _, err := rt.Call(tc.fn); err != nil {
+			res, err := rt.Call(tc.fn)
+			if err != nil {
 				t.Fatalf("Call %s: %v", tc.name, err)
+			}
+			if res.Error == nil {
+				t.Fatalf("%s: expected a structured stale-handle error, got value %#v", tc.name, res.Value)
+			}
+			if got := res.Error.Diagnostic.Code; got != "native_call_failed" {
+				t.Fatalf("%s: diagnostic code = %q, want native_call_failed", tc.name, got)
+			}
+			if msg := res.Error.Diagnostic.Message; !strings.Contains(msg, tc.wantSubstr) {
+				t.Fatalf("%s: message want substring %q, got %q", tc.name, tc.wantSubstr, msg)
 			}
 		})
 	}
