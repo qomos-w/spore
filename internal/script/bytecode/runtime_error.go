@@ -53,6 +53,13 @@ var runtimeErrorDiagnosticCodes = []diagnostics.CodeInfo{
 	{Code: "invalid_capture_cell", Category: diagnostics.CategoryRuntime, Description: "A local slot or capture operand did not hold a capture cell", Hint: "检查闭包捕获的变量是否已在声明后被 lambda 捕获"},
 	{Code: "enum_not_registered", Category: diagnostics.CategoryRuntime, Description: "VM could not resolve an enum constant's runtime registration", Hint: "确认 enum 已声明并被当前模块加载（registerEnums）"},
 	{Code: "invalid_constant", Category: diagnostics.CategoryRuntime, Description: "VM encountered an opcode operand with an unexpected constant kind", Hint: "检查 bytecode 编译器和解释器版本是否匹配"},
+	// vm_internal_panic is the boundary-projected form of a panic that escaped
+	// the VM (an internal invariant was violated, e.g. an exhausted heap or a
+	// stale handle). It is deliberately distinct from every script-visible
+	// runtime error: consumers should treat it as "the engine is buggy here",
+	// not as a program bug they can repair. See doc.go for the dual-track
+	// contract that defines when a panic is the correct signal.
+	{Code: "vm_internal_panic", Category: diagnostics.CategoryRuntime, Description: "A VM internal invariant was violated and surfaced as a panic", Hint: "这是 VM 内部缺陷（不变量被破坏）而非脚本错误；请保留 message 中的 panic 值与复现脚本并上报"},
 }
 
 func init() {

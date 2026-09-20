@@ -14,7 +14,16 @@ func (interp *Interpreter) Execute(mainChunk *chunk, functions map[string]*chunk
 	return interp.executeWithContext(context.Background(), invoke.ExecutionBudget{}, mainChunk, functions)
 }
 
-func (interp *Interpreter) executeWithContext(ctx context.Context, budget invoke.ExecutionBudget, mainChunk *chunk, functions map[string]*chunk) (vm.Value, error) {
+func (interp *Interpreter) executeWithContext(ctx context.Context, budget invoke.ExecutionBudget, mainChunk *chunk, functions map[string]*chunk) (value vm.Value, err error) {
+	// Module-init / top-level statements are a bytecode entry point of their
+	// own (they do not run through runUntilBoundary), so they need the same
+	// recovery boundary as the evaluator methods; see doc.go.
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(interp, "", "vm/program", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	interp.ctx = ctx
 	interp.budget = budget
 	interp.execution = &invoke.ExecutionState{}

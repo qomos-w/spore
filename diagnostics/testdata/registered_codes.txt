@@ -117,6 +117,7 @@ unknown_type_alias_target	schema	Type alias referenced an unknown target type	�
 unsupported_callable_mode	contract	Callable mode is unsupported	将 callable mode 改为 unary 或 streaming
 unsupported_vm_argument_type	runtime	Host value cannot be converted to a VM argument	将参数改为 VM 支持的标量、数组、map 或结构体类型
 value_out_of_range	runtime	A value exceeded the range of its target type	改用更宽的类型（如 long/double）或缩小数值范围
+vm_internal_panic	runtime	A VM internal invariant was violated and surfaced as a panic	这是 VM 内部缺陷（不变量被破坏）而非脚本错误；请保留 message 中的 panic 值与复现脚本并上报
 yield_disallowed_in_try	schema	yield was used inside a try block	将易错片段移入辅助 fun 并 yield 其结果；catch 上下文无法跨流挂起保存
 yield_in_defer	schema	yield was used inside a defer body	移除 defer 块内的 yield；defer 块不能挂起执行
 yield_requires_stream_fun	schema	yield was used outside a stream fun	仅在 stream fun 内使用 yield，或将函数声明为 stream
