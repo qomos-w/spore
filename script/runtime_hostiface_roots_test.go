@@ -10,13 +10,14 @@ import (
 // wiring path — construction, the compile-time VM swap, Clone, and Reset —
 // by VM-lifecycle subscription, not by call-site discipline at bind/finalize
 // time (review #14: "host-bound objects stay rooted for the RT lifetime"
-// as a construction-time guarantee).
+// as a construction-time guarantee). The ledger's boundVM is the VM the
+// provider is attached to and whose handle projection it roots.
 func TestHostIfaceRootsFollowVMLifecycle(t *testing.T) {
 	rt, err := NewRuntime()
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
 	}
-	if rt.hostIfaceRootProviderVM != rt.evaluator.VM() {
+	if rt.hostIface.vm != rt.evaluator.VM() {
 		t.Fatal("root provider must be attached at construction")
 	}
 
@@ -35,7 +36,7 @@ func TestHostIfaceRootsFollowVMLifecycle(t *testing.T) {
 export fun churn(): string { return Greeter.label() }`); err != nil {
 		t.Fatalf("LoadSource: %v", err)
 	}
-	if rt.hostIfaceRootProviderVM != rt.evaluator.VM() {
+	if rt.hostIface.vm != rt.evaluator.VM() {
 		t.Fatal("root provider must follow the post-compile VM swap")
 	}
 
@@ -49,15 +50,21 @@ export fun churn(): string { return Greeter.label() }`); err != nil {
 	if err := rt.Reset(); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if rt.hostIfaceRootProviderVM != rt.evaluator.VM() {
+	if rt.hostIface.vm != rt.evaluator.VM() {
 		t.Fatal("Reset must re-attach the provider on the fresh evaluator's VM")
+	}
+	if rt.hostIface.consistencyError() != "" {
+		t.Fatalf("ledger inconsistent after Reset: %s", rt.hostIface.consistencyError())
 	}
 
 	cloned, err := rt.Clone()
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
-	if cloned.hostIfaceRootProviderVM != cloned.evaluator.VM() {
+	if cloned.hostIface.vm != cloned.evaluator.VM() {
 		t.Fatal("Clone must attach the provider on the clone's own evaluator")
+	}
+	if cloned.hostIface.consistencyError() != "" {
+		t.Fatalf("ledger inconsistent after Clone: %s", cloned.hostIface.consistencyError())
 	}
 }

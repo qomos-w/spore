@@ -15,8 +15,15 @@ type mapTargetStruct struct {
 	Age  int32
 }
 
+// binaryFrame prepends the magic + explicit wire version header to a raw
+// payload, producing a well-formed frame for decode tests.
+func binaryFrame(payload []byte) []byte {
+	header := append([]byte(binaryMagic), binaryWireVersion)
+	return append(header, payload...)
+}
+
 func binaryView(payload []byte) View {
-	return View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct}, Data: append([]byte(binaryMagic), payload...)}
+	return View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct}, Data: binaryFrame(payload)}
 }
 
 func uvarintBytes(n uint64) []byte {
@@ -110,7 +117,7 @@ func TestBinaryDecodeInto_StructByIndexSchemaTyped(t *testing.T) {
 	payload = append(payload, binaryTagInt32)
 	payload = append(payload, 0, 0, 0, 42)
 
-	view := View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct, ClassID: 5}, Data: append([]byte(binaryMagic), payload...)}
+	view := View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct, ClassID: 5}, Data: binaryFrame(payload)}
 	var target mapTargetStruct
 	if err := (&BinaryCodec{}).DecodeInto(view, &target); err != nil {
 		t.Fatalf("DecodeInto: %v", err)
@@ -125,7 +132,7 @@ func TestBinaryDecodeInto_StructByIndexErrors(t *testing.T) {
 		payload := []byte{binaryTagStruct}
 		payload = append(payload, uvarintBytes(schemaID)...)
 		payload = body(payload)
-		return View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct, ClassID: viewClassID}, Data: append([]byte(binaryMagic), payload...)}
+		return View{Schema: schema.TypeDesc{Kind: schema.TypeKindStruct, ClassID: viewClassID}, Data: binaryFrame(payload)}
 	}
 	var target mapTargetStruct
 	// Schema mismatch.
@@ -161,7 +168,7 @@ func TestBinaryDecodeInto_GuardErrors(t *testing.T) {
 	if err := codec.DecodeInto(View{}, &target); err == nil || !strings.Contains(err.Error(), "empty data") {
 		t.Fatalf("expected empty-data guard, got %v", err)
 	}
-	if err := codec.DecodeInto(View{Data: []byte("xx")}, &target); err == nil || !strings.Contains(err.Error(), "magic") {
+	if err := codec.DecodeInto(View{Data: []byte("xxxx")}, &target); err == nil || !strings.Contains(err.Error(), "magic") {
 		t.Fatalf("expected magic guard, got %v", err)
 	}
 	// Trailing bytes after a complete value.

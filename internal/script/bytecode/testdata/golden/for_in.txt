@@ -1,0 +1,67 @@
+== main ==
+source="" localCount=0
+  0000 HALT                         0 line=0
+== fun keys ==
+source="keys" localCount=5
+  0000 PUSH_STRING                  0 line=0
+  0001 STORE_LOCAL                  1 line=0
+  0002 LOAD_LOCAL                   0 line=0
+  0003 STORE_LOCAL                  2 line=0
+  0004 PUSH_INT                     1 line=0
+  0005 STORE_LOCAL                  3 line=0
+  0006 JUMP                         19 line=0
+  0007 LOAD_LOCAL                   2 line=0
+  0008 LOAD_LOCAL                   3 line=0
+  0009 ITER_ITEM                    0 line=0
+  0010 STORE_LOCAL                  4 line=0
+  0011 LOAD_LOCAL                   1 line=0
+  0012 LOAD_LOCAL                   4 line=0
+  0013 ADD                          0 line=0
+  0014 STORE_LOCAL_POP              1 line=0
+  0015 LOAD_LOCAL                   3 line=0
+  0016 PUSH_INT                     2 line=0
+  0017 ADD                          0 line=0
+  0018 STORE_LOCAL                  3 line=0
+  0019 LOAD_LOCAL                   3 line=0
+  0020 LOAD_LOCAL                   2 line=0
+  0021 ITER_LEN                     0 line=0
+  0022 LT                           0 line=0
+  0023 JUMP_IF_TRUE                 7 line=0
+  0024 LOAD_LOCAL                   1 line=0
+  0025 RETURN                       0 line=0
+  0026 RETURN_VOID                  0 line=0
+  const[0]=string()
+  const[1]=int32(0)
+  const[2]=int32(1)
+== fun sumall ==
+source="sumall" localCount=5
+  0000 PUSH_INT                     0 line=0
+  0001 STORE_LOCAL                  1 line=0
+  0002 LOAD_LOCAL                   0 line=0
+  0003 STORE_LOCAL                  2 line=0
+  0004 PUSH_INT                     1 line=0
+  0005 STORE_LOCAL                  3 line=0
+  0006 JUMP                         19 line=0
+  0007 LOAD_LOCAL                   2 line=0
+  0008 LOAD_LOCAL                   3 line=0
+  0009 ITER_ITEM                    0 line=0
+  0010 STORE_LOCAL                  4 line=0
+  0011 LOAD_LOCAL                   1 line=0
+  0012 LOAD_LOCAL                   4 line=0
+  0013 ADD                          0 line=0
+  0014 STORE_LOCAL_POP              1 line=0
+  0015 LOAD_LOCAL                   3 line=0
+  0016 PUSH_INT                     2 line=0
+  0017 ADD                          0 line=0
+  0018 STORE_LOCAL                  3 line=0
+  0019 LOAD_LOCAL                   3 line=0
+  0020 LOAD_LOCAL                   2 line=0
+  0021 ITER_LEN                     0 line=0
+  0022 LT                           0 line=0
+  0023 JUMP_IF_TRUE                 7 line=0
+  0024 LOAD_LOCAL                   1 line=0
+  0025 RETURN                       0 line=0
+  0026 RETURN_VOID                  0 line=0
+  const[0]=int32(0)
+  const[1]=int32(0)
+  const[2]=int32(1)

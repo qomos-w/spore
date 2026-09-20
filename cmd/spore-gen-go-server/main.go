@@ -23,6 +23,11 @@
 // struct final types with scalar fields are supported; streaming
 // callables and nested struct fields fail loudly. exp09 is the primary
 // consumer today and stays inside the supported subset.
+//
+// Generation runs through the public gen/render façade — the same entry point
+// external embedders use — so the four spore-gen-* CLIs present one symmetric
+// public code-generation surface. Only CLI plumbing (flag registration,
+// manifest decoding, file IO) comes from internal packages.
 package main
 
 import (
@@ -30,8 +35,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/qomos-w/spore/gen/render"
 	"github.com/qomos-w/spore/internal/gen/common"
-	goserver "github.com/qomos-w/spore/internal/gen/go-server"
 	"github.com/qomos-w/spore/internal/gen/manifest"
 )
 
@@ -65,7 +70,7 @@ func main() {
 		fail(fmt.Errorf("decode manifest: %w", err))
 	}
 
-	files, err := goserver.Generate(schemas, callables, goserver.Options{
+	files, err := render.GenerateGoServer(schemas, callables, render.GoServerOptions{
 		Package:      flags.Package,
 		Visibilities: visibilities,
 		Header:       flags.Header,

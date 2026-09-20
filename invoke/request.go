@@ -22,7 +22,7 @@ type InvocationRequest struct {
 // its executable implementation. Implementations must return a Callable()
 // descriptor that matches the registered callable.
 // SPI: pluggable callable execution backend — alternative implementations
-// can be provided to ExecutableRegistry.RegisterAdapter.
+// can be provided to Registry.RegisterAdapter.
 type ExecutableAdapter interface {
 	Callable() schema.CallableDesc
 	Invoke(req InvocationRequest) (InvocationOutcome, error)

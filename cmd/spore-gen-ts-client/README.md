@@ -130,23 +130,24 @@ falls out naturally.
 
 ## Calling the package directly
 
-If you would rather skip the JSON manifest, you can import the gen package
-from any program **inside** the spore module (it lives at
-`internal/gen/ts-client`, so external imports are not allowed):
+Embedders **outside** the spore module drive generation through the public
+`gen/render` façade: `render.GenerateTSClient` re-exports this generator over
+the same visibility/options contract, so no internal import is required.
+Programs inside the spore module may still import `internal/gen/ts-client`
+directly.
 
 ```go
 import (
-    tsclient "github.com/qomos-w/spore/internal/gen/ts-client"
-    "github.com/qomos-w/spore/internal/gen/ts"
+    "github.com/qomos-w/spore/gen/render"
     "github.com/qomos-w/spore/schema"
 )
 
-files, err := tsclient.Generate(
-    []ts.NamedCallableDesc{
+files, err := render.GenerateTSClient(
+    []render.NamedCallableDesc{
         {
             Namespace:     "auth",
             Name:          "lookup_user",
-            Visibility:    ts.VisibilityPublic,
+            Visibility:    render.VisibilityPublic,
             Mode:          schema.CallableModeUnary,
             ReqSchemaID:   1,
             FinalSchemaID: 2,
@@ -154,15 +155,16 @@ files, err := tsclient.Generate(
             Final:         respType,
         },
     },
-    ts.Options{
-        Visibilities: []ts.Visibility{ts.VisibilityPublic},
+    render.Options{
+        Visibilities: []render.Visibility{render.VisibilityPublic},
         Header:       "// AUTO-GENERATED — DO NOT EDIT",
     },
 )
 ```
 
-`Generate` returns `map[relPath]content` (e.g. `"auth/client.ts" -> "..."`);
-the CLI is a thin wrapper that writes each entry to disk.
+`GenerateTSClient` returns `map[relPath]content` (e.g.
+`"auth/client.ts" -> "..."`); the CLI is a thin wrapper that writes each entry
+to disk.
 
 ## Verification
 

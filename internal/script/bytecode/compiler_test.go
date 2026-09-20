@@ -1514,22 +1514,31 @@ func TestCompiler_DiagnosticCodesRegistered(t *testing.T) {
 }
 
 func TestCompiler_AllAddCompileErrorCodesAreRegistered(t *testing.T) {
-	source, err := os.ReadFile("compiler.go")
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("read compiler.go: %v", err)
+		t.Fatalf("read bytecode package directory: %v", err)
 	}
 	re := regexp.MustCompile(`addCompileError(?:WithTypes)?\("([a-z_]+)"`)
-	matches := re.FindAllSubmatch(source, -1)
-	if len(matches) == 0 {
-		t.Fatal("expected to find at least one addCompileError call in compiler.go")
-	}
 	seen := map[string]struct{}{}
-	for _, m := range matches {
-		seen[string(m[1])] = struct{}{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, m := range re.FindAllSubmatch(source, -1) {
+			seen[string(m[1])] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("expected to find at least one addCompileError call in the bytecode package sources")
 	}
 	for code := range seen {
 		if _, ok := diagnostics.LookupCode(code); !ok {
-			t.Errorf("compile diagnostic code %q is emitted in compiler.go but not registered with diagnostics package", code)
+			t.Errorf("compile diagnostic code %q is emitted in the bytecode package but not registered with diagnostics package", code)
 		}
 	}
 }

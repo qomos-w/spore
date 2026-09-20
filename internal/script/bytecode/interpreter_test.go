@@ -1752,7 +1752,7 @@ func TestInterpreter_InheritNonOpenClassStructuredDiagnostic(t *testing.T) {
 
 func TestInterpreter_OverrideWithoutParentStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.classes["Dog"] = classInfo{name: "Dog", methods: []methodDecl{{name: "speak", isOverride: true}}}
+	c.classes["Dog"] = classInfo{name: "Dog", methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, IsOverride: true}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {
@@ -1771,8 +1771,8 @@ func TestInterpreter_OverrideWithoutParentStructuredDiagnostic(t *testing.T) {
 
 func TestInterpreter_OverrideNonOpenParentMethodStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []methodDecl{{name: "speak", isOpen: false}}}
-	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []methodDecl{{name: "speak", isOverride: true}}}
+	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, IsOpen: false}}}
+	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, IsOverride: true}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {
@@ -1791,8 +1791,8 @@ func TestInterpreter_OverrideNonOpenParentMethodStructuredDiagnostic(t *testing.
 
 func TestInterpreter_OverrideMissingMethodStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []methodDecl{{name: "speak", isOpen: true}}}
-	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []methodDecl{{name: "bark", isOverride: true}}}
+	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, IsOpen: true}}}
+	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "bark"}, IsOverride: true}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {
@@ -1830,8 +1830,8 @@ func TestInterpreter_UnknownInterfaceStructuredDiagnostic(t *testing.T) {
 
 func TestInterpreter_InterfaceMethodMissingStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.interfaces["Greeter"] = interfaceInfo{name: "Greeter", methods: []interfaceMethodSig{{name: "greet", paramCount: 0}}}
-	c.classes["Dog"] = classInfo{name: "Dog", implements: []string{"Greeter"}, methods: []methodDecl{{name: "bark"}}}
+	c.interfaces["Greeter"] = interfaceInfo{name: "Greeter", methods: []*frontend.MethodSignature{{Name: &frontend.Ident{Value: "greet"}}}}
+	c.classes["Dog"] = classInfo{name: "Dog", implements: []string{"Greeter"}, methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "bark"}}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {
@@ -1881,8 +1881,8 @@ fun run(): string { return "x" }
 
 func TestInterpreter_OverrideSignatureMismatchStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []methodDecl{{name: "speak", paramNames: []string{}, returnType: "string", isOpen: true}}}
-	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []methodDecl{{name: "speak", paramNames: []string{"volume"}, returnType: "string", isOverride: true}}}
+	c.classes["Animal"] = classInfo{name: "Animal", isOpen: true, methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, ReturnType: &frontend.TypeAnnotation{Name: "string"}, IsOpen: true}}}
+	c.classes["Dog"] = classInfo{name: "Dog", parent: "Animal", methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "speak"}, Params: []*frontend.Param{{Name: &frontend.Ident{Value: "volume"}}}, ReturnType: &frontend.TypeAnnotation{Name: "string"}, IsOverride: true}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {
@@ -1901,8 +1901,8 @@ func TestInterpreter_OverrideSignatureMismatchStructuredDiagnostic(t *testing.T)
 
 func TestInterpreter_InterfaceSignatureMismatchStructuredDiagnostic(t *testing.T) {
 	c := newCompiler()
-	c.interfaces["Greeter"] = interfaceInfo{name: "Greeter", methods: []interfaceMethodSig{{name: "greet", paramCount: 0}}}
-	c.classes["Dog"] = classInfo{name: "Dog", implements: []string{"Greeter"}, methods: []methodDecl{{name: "greet", paramNames: []string{"volume"}}}}
+	c.interfaces["Greeter"] = interfaceInfo{name: "Greeter", methods: []*frontend.MethodSignature{{Name: &frontend.Ident{Value: "greet"}}}}
+	c.classes["Dog"] = classInfo{name: "Dog", implements: []string{"Greeter"}, methods: []*frontend.FunStmt{{Name: &frontend.Ident{Value: "greet"}, Params: []*frontend.Param{{Name: &frontend.Ident{Value: "volume"}}}}}}
 	v := vm.NewVM(4096, 256)
 	c.registerClasses(v)
 	if len(c.errors) == 0 {

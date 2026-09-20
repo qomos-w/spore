@@ -13,7 +13,31 @@ import (
 )
 
 const (
-	binaryMagic = "TBC\x02"
+	// binaryMagic is the fixed frame preamble shared by every wire version.
+	// The format version is deliberately NOT baked into the magic: it lives in
+	// its own header byte (binaryWireVersion) so the wire format can evolve
+	// without redefining the magic bytes.
+	binaryMagic = "TBC"
+
+	// binaryWireVersion is the current frame format version, written as the
+	// byte immediately after binaryMagic. It is the single explicit source of
+	// truth for whether a frame is accepted; the decoder never infers the
+	// format from payload shape.
+	binaryWireVersion byte = 3
+
+	// binaryLegacyWireVersion is the version that used to be glued onto the
+	// magic ("TBC\x02"). It is recognised only so the decoder can reject it
+	// with a precise error: the only TBC consumer in-tree is the same-binary
+	// child-actor response path, so no legacy frames are ever in flight.
+	binaryLegacyWireVersion byte = 2
+
+	// entrySequenceWireVersion is the first wire version whose format defines
+	// the TAG_ENTRY_SEQUENCE container for map-kind scopes.
+	entrySequenceWireVersion byte = 2
+
+	// binaryHeaderLen is the full header size: the magic preamble plus the
+	// explicit version byte.
+	binaryHeaderLen = len(binaryMagic) + 1
 
 	binaryTagNull          byte = 0x00
 	binaryTagBoolFalse     byte = 0x01
@@ -33,6 +57,11 @@ const (
 // BinaryCodec is a Codec implementation that uses a schema-aware custom binary format.
 // It preserves the same canonical projection shapes as JSONCodec while producing
 // a deterministic binary payload.
+//
+// Frame layout: the fixed 3-byte magic "TBC", then one explicit wire-version
+// byte (binaryWireVersion), then a self-describing tag stream. The magic and
+// the version are independent: the version is the sole determinant of frame
+// acceptance, so the format can evolve without redefining the magic.
 type BinaryCodec struct{}
 
 func (c *BinaryCodec) Encode(s schema.TypeDesc, id identity.CanonicalID, value any) (View, error) {
@@ -47,6 +76,7 @@ func (c *BinaryCodec) Encode(s schema.TypeDesc, id identity.CanonicalID, value a
 
 	enc := &binaryEncoder{sd: s}
 	enc.writeBytes([]byte(binaryMagic))
+	enc.writeByte(binaryWireVersion)
 	if err := enc.encodeValue(projected, nil); err != nil {
 		return View{}, encodeErrorf(s, id, "", fmt.Errorf("binary encode: %w", err))
 	}
@@ -57,6 +87,37 @@ func (c *BinaryCodec) Encode(s schema.TypeDesc, id identity.CanonicalID, value a
 		Identity: id,
 		Data:     enc.buf,
 	}, nil
+}
+
+// parseBinaryHeader validates the fixed magic preamble and the explicit wire
+// version, returning the payload that follows the header. Frame acceptance is
+// decided by the declared version byte alone — there is no payload-shape
+// sniffing on the read path.
+func parseBinaryHeader(data []byte) ([]byte, error) {
+	if len(data) < binaryHeaderLen {
+		return nil, fmt.Errorf("binary decode: truncated header")
+	}
+	if string(data[:len(binaryMagic)]) != binaryMagic {
+		return nil, fmt.Errorf("binary decode: invalid magic")
+	}
+	version := data[len(binaryMagic)]
+	switch version {
+	case binaryWireVersion:
+		return data[binaryHeaderLen:], nil
+	case binaryLegacyWireVersion:
+		return nil, fmt.Errorf("binary decode: unsupported legacy wire version %d (want %d)", version, binaryWireVersion)
+	default:
+		return nil, fmt.Errorf("binary decode: unsupported wire version %d (want %d)", version, binaryWireVersion)
+	}
+}
+
+// wireVersionSupportsEntrySequence reports whether the current wire version
+// defines the TAG_ENTRY_SEQUENCE container for map-kind scopes. This replaces
+// the former looksLikeEntrySequence runtime-shape heuristic: the format
+// capability is determined by the declared wire version, and the schema kind
+// (not the value's shape) selects the container.
+func wireVersionSupportsEntrySequence() bool {
+	return binaryWireVersion >= entrySequenceWireVersion
 }
 
 // DecodeInto decodes binary data directly into target using reflection,
@@ -70,10 +131,11 @@ func (c *BinaryCodec) DecodeInto(view View, target any) error {
 	if len(view.Data) == 0 {
 		return decodeErrorWithPath(view, "", "binary decode: empty data")
 	}
-	if len(view.Data) < len(binaryMagic) || string(view.Data[:len(binaryMagic)]) != binaryMagic {
-		return decodeErrorWithPath(view, "", "binary decode: invalid magic/version")
+	payload, err := parseBinaryHeader(view.Data)
+	if err != nil {
+		return decodeErrorWithPath(view, "", "%v", err)
 	}
-	dec := &binaryDecoder{data: view.Data[len(binaryMagic):], sd: view.Schema}
+	dec := &binaryDecoder{data: payload, sd: view.Schema}
 	if err := dec.decodeInto(rv.Elem(), ""); err != nil {
 		return decodeErrorWithPath(view, "", "binary DecodeInto: %w", err)
 	}
@@ -92,14 +154,15 @@ func (c *BinaryCodec) Decode(view View) (any, error) {
 			Err:        fmt.Errorf("empty data"),
 		}
 	}
-	if len(view.Data) < len(binaryMagic) {
+	if len(view.Data) < binaryHeaderLen {
 		return nil, decodeErrorWithPath(view, "", "binary decode: truncated header")
 	}
-	if string(view.Data[:len(binaryMagic)]) != binaryMagic {
-		return nil, decodeErrorWithPath(view, "", "binary decode: invalid magic/version")
+	payload, err := parseBinaryHeader(view.Data)
+	if err != nil {
+		return nil, decodeErrorWithPath(view, "", "%v", err)
 	}
 
-	dec := &binaryDecoder{data: view.Data[len(binaryMagic):], sd: view.Schema}
+	dec := &binaryDecoder{data: payload, sd: view.Schema}
 	value, err := dec.decodeValue("")
 	if err != nil {
 		return nil, decodeErrorWithPath(view, "", "binary decode: %w", err)
@@ -204,11 +267,13 @@ func (e *binaryEncoder) encodeValue(value any, fieldSD *schema.TypeDesc) error {
 		}
 		fallthrough
 	case reflect.Array:
-		// Entry-sequence encoding is reserved for map-kind scopes: it is the
-		// canonical wire form for a map projected as ordered {Key, Value}
-		// entries. An array<Struct> whose elements merely expose Key/Value
-		// fields must stay a TAG_ARRAY of full structs.
-		if e.sd.Kind == schema.TypeKindMap && looksLikeEntrySequence(v) {
+		// Entry-sequence encoding is the canonical wire form for a map-kind
+		// scope. The container is selected by an explicit format rule — the
+		// declared wire version supports entry sequences and the schema kind is
+		// a map — never by inspecting the runtime shape of the value. An
+		// array<Struct> whose elements merely expose Key/Value fields has a
+		// non-map scope and therefore stays a TAG_ARRAY of full structs.
+		if e.sd.Kind == schema.TypeKindMap && wireVersionSupportsEntrySequence() {
 			e.writeByte(binaryTagEntrySequence)
 			e.writeUvarint(uint64(v.Len()))
 			for i := 0; i < v.Len(); i++ {
@@ -897,7 +962,12 @@ func binaryProjectValue(s schema.TypeDesc, value any) (any, error) {
 		if v.IsValid() && v.Kind() == reflect.Struct && isOrderedMapValue(v) {
 			return orderedMapEntries(v)
 		}
-		if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Array) && looksLikeEntrySequence(v) {
+		// A map-kind scope projects either as a native Go map or as an ordered
+		// entry sequence (a slice of {Key, Value} entries). The container is
+		// chosen by the schema kind plus the declared wire version — not by a
+		// value-shape heuristic — so any slice under a map scope is treated as
+		// an entry sequence and validated as such.
+		if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Array) && wireVersionSupportsEntrySequence() {
 			entries := make([]any, v.Len())
 			for i := 0; i < v.Len(); i++ {
 				key, val, ok := entryFromProjectedValue(v.Index(i).Interface())
@@ -997,17 +1067,6 @@ func canonicalizeScalar(view View, value any) (any, error) {
 	default:
 		return value, nil
 	}
-}
-
-func looksLikeEntrySequence(v reflect.Value) bool {
-	if !v.IsValid() || (v.Kind() != reflect.Slice && v.Kind() != reflect.Array) {
-		return false
-	}
-	if v.Len() == 0 {
-		return true
-	}
-	_, _, ok := entryFromProjectedValue(v.Index(0).Interface())
-	return ok
 }
 
 func entryFromProjectedValue(value any) (key any, val any, ok bool) {

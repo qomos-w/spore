@@ -16,17 +16,22 @@ const (
 type rootProvider func(func(value))
 
 // vm is the virtual machine core.
-// It holds the unified memory pool, registries, and stacks.
+// It holds the unified memory pool, registries, and the operand-stack
+// capacity consumed by the interpreter's single execution stack.
 type vm struct {
 	// Unified memory pool
 	memory   []uint64
 	memTop   int
 	freeList []freeSlot
 
-	// VM stack (used by interpreter for expression evaluation)
-	stack []uint64
-	sp    int
-	fp    int
+	// Operand-stack capacity for the single execution stack.
+	//
+	// The VM no longer owns an operand stack of its own: the bytecode
+	// interpreter is the sole owner (see bytecode/interpreter.go) and sizes
+	// its stack from this value. It lives here because NewVM is the
+	// configuration entry point (script.RuntimeOptions.VMHeapSlots ->
+	// NewVMEvaluatorWith -> NewVM).
+	stackCapacity int
 
 	// Additional GC roots contributed by higher runtime layers.
 	rootProviders      map[int]rootProvider
@@ -64,15 +69,15 @@ type vm struct {
 	sourceFileMap map[string]int
 }
 
-// newVM creates a new VM instance.
-func newVM(memorySize, stackSize int) *vm {
+// newVM creates a new VM instance. stackCapacity is the operand-stack
+// capacity handed to the interpreter's single execution stack (see
+// bytecode/interpreter.go); the VM itself owns no operand stack.
+func newVM(memorySize, stackCapacity int) *vm {
 	v := &vm{
 		memory:             make([]uint64, memorySize),
 		memTop:             1,
 		freeList:           make([]freeSlot, 0),
-		stack:              make([]uint64, stackSize),
-		sp:                 0,
-		fp:                 0,
+		stackCapacity:      stackCapacity,
 		rootProviders:      make(map[int]rootProvider),
 		rootProviderOrder:  make([]int, 0),
 		nextRootProviderID: 1,
@@ -314,28 +319,9 @@ func (v *vm) decodeDouble(val value) float64 { return val.decodeDouble() }
 
 // --- Stack operations ---
 
-func (v *vm) push(val value) {
-	if v.sp >= len(v.stack) {
-		vmPanic("stack overflow", "stackPointer", v.sp, "stackSize", len(v.stack))
-	}
-	v.stack[v.sp] = uint64(val)
-	v.sp++
-}
-
-func (v *vm) pop() value {
-	if v.sp <= 0 {
-		vmPanic("stack underflow", "stackPointer", v.sp)
-	}
-	v.sp--
-	return value(v.stack[v.sp])
-}
-
-func (v *vm) peek() value {
-	if v.sp <= 0 {
-		vmPanic("stack underflow", "stackPointer", v.sp)
-	}
-	return value(v.stack[v.sp-1])
-}
+// Operand-stack push/pop/peek live in the interpreter (bytecode package),
+// which owns the single execution stack. The VM only carries the configured
+// capacity; see stackCapacity and VM.OperandStackCapacity.
 
 // --- String operations ---
 

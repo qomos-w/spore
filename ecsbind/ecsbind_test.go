@@ -1,7 +1,6 @@
 package ecsbind_test
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -794,11 +793,14 @@ func TestScript_QueryFromScript(t *testing.T) {
 }
 
 // TestScript_StaleIDPropagatesError confirms that destroy / set /
-// changes raise a host-interface panic when fed an unknown id. The
-// script runtime (script/runtime.go:1315) deliberately converts host
-// method errors into panics — there is no recovery path inside the
-// bytecode VM, so the panic surfaces to the host process. Tests must
-// catch it via defer/recover.
+// changes report a structured runtime error when fed an unknown id.
+//
+// A host-interface method that returns an error is a Track 2 (recoverable)
+// condition: the script runtime used to re-panic it into the host process,
+// so tests had to catch it with defer/recover. Since the #29 error-model
+// convergence it travels the normal channel instead — Call returns a Result
+// whose Error carries the stable native_call_failed code plus the host error
+// text — and Call never panics.
 func TestScript_StaleIDPropagatesError(t *testing.T) {
 	rt := mustRuntime(t)
 	w := runtime.NewWorld()
@@ -828,26 +830,27 @@ export fun changes_unknown(id: string): map<string, any> {
 
 	for _, name := range []string{"destroy_unknown", "set_unknown", "changes_unknown"} {
 		t.Run(name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("expected host-interface panic from %s on stale id, got nil", name)
-				}
-				msg := fmt.Sprint(r)
-				if !strings.Contains(msg, "not alive") {
-					t.Fatalf("expected panic message to mention 'not alive', got %q", msg)
-				}
-			}()
-			// Pass the right number of arguments per function.
+			var (
+				res script.Result
+				err error
+			)
 			switch name {
 			case "destroy_unknown", "changes_unknown":
-				if _, err := rt.Call(name, stale); err != nil {
-					t.Fatalf("Call %s: %v", name, err)
-				}
+				res, err = rt.Call(name, stale)
 			case "set_unknown":
-				if _, err := rt.Call(name, stale, 1); err != nil {
-					t.Fatalf("Call %s: %v", name, err)
-				}
+				res, err = rt.Call(name, stale, 1)
+			}
+			if err != nil {
+				t.Fatalf("Call %s: %v", name, err)
+			}
+			if res.Error == nil {
+				t.Fatalf("%s: expected a structured host-interface error, got value %#v", name, res.Value)
+			}
+			if got := res.Error.Diagnostic.Code; got != "native_call_failed" {
+				t.Fatalf("%s: diagnostic code = %q, want native_call_failed", name, got)
+			}
+			if msg := res.Error.Diagnostic.Message; !strings.Contains(msg, "not alive") {
+				t.Fatalf("%s: expected message to mention 'not alive', got %q", name, msg)
 			}
 		})
 	}
@@ -909,20 +912,21 @@ export fun set_unknown(id: string, v: int): int {
 		t.Fatalf("has_unknown: want false")
 	}
 
-	// Set on unregistered component panics the host interface. Use a
-	// helper that traps the panic so we can assert its shape.
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected host-interface panic from set_unknown on unregistered component")
-		}
-		msg := fmt.Sprint(r)
-		if !strings.Contains(msg, "Position") || !strings.Contains(msg, "no registered schema") {
-			t.Fatalf("expected panic to mention unregistered component Position, got %q", msg)
-		}
-	}()
-	if _, err := rt.Call("set_unknown", id, 1); err != nil {
+	// Set on an unregistered component is a host-interface error (Track 2),
+	// reported as a structured runtime error rather than a panic.
+	res, err = rt.Call("set_unknown", id, 1)
+	if err != nil {
 		t.Fatalf("Call set_unknown: %v", err)
+	}
+	if res.Error == nil {
+		t.Fatalf("set_unknown: expected a structured host-interface error, got value %#v", res.Value)
+	}
+	if got := res.Error.Diagnostic.Code; got != "native_call_failed" {
+		t.Fatalf("set_unknown: diagnostic code = %q, want native_call_failed", got)
+	}
+	msg := res.Error.Diagnostic.Message
+	if !strings.Contains(msg, "Position") || !strings.Contains(msg, "no registered schema") {
+		t.Fatalf("expected message to mention unregistered component Position, got %q", msg)
 	}
 }
 

@@ -93,7 +93,8 @@ func TestGCWithClassInheritance(t *testing.T) {
 	obj := v.createObject(2)
 	v.setField(obj, "id", encodeInt(42))
 	v.setField(obj, "extra", v.encodeString("hello"))
-	v.push(encodeHandle(obj))
+	release := v.addTemporaryRoot(encodeHandle(obj))
+	defer release()
 
 	v.gc.collect()
 
@@ -124,7 +125,8 @@ func TestGCWithObjectInArrayInMap(t *testing.T) {
 	// Put array in a map.
 	m := v.newMap(typeString, typeAny, 0)
 	v.mapSet(m, v.encodeString("nodes"), encodeHandle(arr))
-	v.push(encodeHandle(m))
+	release := v.addTemporaryRoot(encodeHandle(m))
+	defer release()
 
 	v.gc.collect()
 
@@ -139,41 +141,6 @@ func TestGCWithObjectInArrayInMap(t *testing.T) {
 	fieldVal := v.getField(objHandle, "val")
 	if fieldVal.decodeInt() != 77 {
 		t.Errorf("nested value after GC = %d, want 77", fieldVal.decodeInt())
-	}
-}
-
-func TestVMStackPushPopSequence(t *testing.T) {
-	v := newVM(4096, 256)
-
-	// Push multiple types.
-	v.push(encodeInt(1))
-	v.push(encodeBool(true))
-	v.push(v.encodeString("hello"))
-	v.push(encodeFloat(3.14))
-
-	if v.sp != 4 {
-		t.Errorf("sp = %d, want 4", v.sp)
-	}
-
-	// Pop in reverse order.
-	f := v.pop()
-	if !f.isFloat() {
-		t.Error("expected float on top")
-	}
-
-	s := v.pop()
-	if !s.isString() {
-		t.Error("expected string next")
-	}
-
-	b := v.pop()
-	if !b.isBool() {
-		t.Error("expected bool next")
-	}
-
-	i := v.pop()
-	if !i.isInt() {
-		t.Error("expected int on bottom")
 	}
 }
 
@@ -341,7 +308,8 @@ func TestMemoryPoolExhaustion(t *testing.T) {
 
 	// Keep one reachable.
 	h := v.newStruct(sid, []value{encodeInt(1)})
-	v.push(encodeHandle(h))
+	release := v.addTemporaryRoot(encodeHandle(h))
+	defer release()
 
 	// Allocate until exhaustion — should panic.
 	defer func() {
@@ -352,34 +320,8 @@ func TestMemoryPoolExhaustion(t *testing.T) {
 	}()
 	for i := 0; i < 100; i++ {
 		s := v.newStruct(sid, []value{encodeInt(int32(i))})
-		v.push(encodeHandle(s))
+		_ = v.addTemporaryRoot(encodeHandle(s))
 	}
-}
-
-func TestStackOverflow(t *testing.T) {
-	v := newVM(4096, 8) // Very small stack.
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("expected panic on stack overflow")
-		}
-	}()
-	for i := 0; i < 20; i++ {
-		v.push(encodeInt(int32(i)))
-	}
-}
-
-func TestStackUnderflow(t *testing.T) {
-	v := newVM(4096, 256)
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("expected panic on stack underflow")
-		}
-	}()
-	v.pop() // stack is empty
 }
 
 func TestValueNullEncoding(t *testing.T) {
@@ -431,7 +373,8 @@ func TestDumpMemoryNoPanic(t *testing.T) {
 
 	sid, _ := v.structRegistry.register("S", []fieldDef{{name: "x", typeID: typeInt}})
 	h := v.newStruct(sid, []value{encodeInt(42)})
-	v.push(encodeHandle(h))
+	release := v.addTemporaryRoot(encodeHandle(h))
+	defer release()
 
 	// dumpMemory should not panic.
 	result := v.dumpMemory()

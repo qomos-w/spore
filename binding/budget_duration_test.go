@@ -56,10 +56,10 @@ func newBudgetProbeBinding(t *testing.T) (*budgetProbeCallable, *ScriptBinding) 
 	return probe, sb
 }
 
-func newBudgetProbeRegistry(t *testing.T, probe *budgetProbeCallable, policy CapabilityPolicy) *MemoryCapabilityRegistry {
+func newBudgetProbeRegistry(t *testing.T, probe *budgetProbeCallable, policy CapabilityPolicy) *Registry {
 	t.Helper()
-	registry := NewMemoryCapabilityRegistry()
-	if err := registry.Register(RegisteredCapability{
+	registry := NewRegistry()
+	if err := registry.RegisterCapability(RegisteredCapability{
 		Desc:      CapabilityDesc{Name: "budget", Callables: []schema.CallableDesc{probe.desc}},
 		Policy:    policy,
 		Callables: map[string]CapabilityCallable{"read": probe},
@@ -158,8 +158,8 @@ func TestCapabilityRegistryFallsBackToBudgetMaxDuration(t *testing.T) {
 	probe := &budgetProbeCallable{desc: budgetProbeDesc()}
 	registry := newBudgetProbeRegistry(t, probe, CapabilityPolicy{})
 	start := time.Now()
-	if _, err := registry.InvokeAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: time.Minute}}, "budget", "read", "ok"); err != nil {
-		t.Fatalf("InvokeAuthorized: %v", err)
+	if _, err := registry.InvokeCapabilityAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: time.Minute}}, "budget", "read", "ok"); err != nil {
+		t.Fatalf("InvokeCapabilityAuthorized: %v", err)
 	}
 	if !probe.hasDeadline {
 		t.Fatal("expected capability path to honor Budget.MaxDuration when policy has no timeout")
@@ -175,8 +175,8 @@ func TestCapabilityRegistryPolicyTimeoutWinsOverBudget(t *testing.T) {
 	probe := &budgetProbeCallable{desc: budgetProbeDesc()}
 	registry := newBudgetProbeRegistry(t, probe, CapabilityPolicy{Timeout: 30 * time.Millisecond})
 	start := time.Now()
-	if _, err := registry.InvokeAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: time.Hour}}, "budget", "read", "ok"); err != nil {
-		t.Fatalf("InvokeAuthorized: %v", err)
+	if _, err := registry.InvokeCapabilityAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: time.Hour}}, "budget", "read", "ok"); err != nil {
+		t.Fatalf("InvokeCapabilityAuthorized: %v", err)
 	}
 	if !probe.hasDeadline {
 		t.Fatal("expected policy timeout deadline")
@@ -191,7 +191,7 @@ func TestCapabilityRegistryPolicyTimeoutWinsOverBudget(t *testing.T) {
 func TestCapabilityRegistryBudgetMaxDurationExpires(t *testing.T) {
 	probe := &budgetProbeCallable{desc: budgetProbeDesc(), block: true}
 	registry := newBudgetProbeRegistry(t, probe, CapabilityPolicy{})
-	_, err := registry.InvokeAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: 5 * time.Millisecond}}, "budget", "read", "ok")
+	_, err := registry.InvokeCapabilityAuthorized(AuthorizedInvocation{Budget: ExecutionBudget{MaxDuration: 5 * time.Millisecond}}, "budget", "read", "ok")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}

@@ -41,6 +41,11 @@
 // Users dump this manifest from a small Go program in their own repository
 // using schema.DescribeGoStruct and any callable metadata they maintain —
 // see README.md for an example.
+//
+// Generation runs through the public gen/render façade — the same entry point
+// external embedders use — so the four spore-gen-* CLIs present one symmetric
+// public code-generation surface. Only CLI plumbing (flag registration,
+// manifest decoding, file IO) comes from internal packages.
 package main
 
 import (

@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"reflect"
 	"testing"
 )
 
@@ -68,37 +67,5 @@ func TestEntryFromProjectedValue(t *testing.T) {
 	_, _, ok = entryFromProjectedValue(unexportedEntry{key: "d", value: 4})
 	if ok {
 		t.Fatal("expected unexported fields to fail")
-	}
-}
-
-func TestLooksLikeEntrySequence(t *testing.T) {
-	// invalid value
-	if looksLikeEntrySequence(reflect.Value{}) {
-		t.Fatal("expected invalid value to be false")
-	}
-
-	// non-slice
-	if looksLikeEntrySequence(reflect.ValueOf(42)) {
-		t.Fatal("expected int to be false")
-	}
-
-	// empty slice
-	if !looksLikeEntrySequence(reflect.ValueOf([]entryStruct{})) {
-		t.Fatal("expected empty slice to be true")
-	}
-
-	// slice of valid entries
-	if !looksLikeEntrySequence(reflect.ValueOf([]entryStruct{{Key: "a", Value: 1}})) {
-		t.Fatal("expected slice of entries to be true")
-	}
-
-	// slice of invalid entries
-	if looksLikeEntrySequence(reflect.ValueOf([]int{1, 2, 3})) {
-		t.Fatal("expected slice of ints to be false")
-	}
-
-	// array of valid entries
-	if !looksLikeEntrySequence(reflect.ValueOf([1]entryStruct{{Key: "a", Value: 1}})) {
-		t.Fatal("expected array of entries to be true")
 	}
 }

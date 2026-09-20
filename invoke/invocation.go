@@ -29,7 +29,7 @@ type ExecutionState struct {
 // context error that carries the MaxDuration budget:
 //
 //   - MaxDuration is not tracked in state. The invocation path derives the
-//     context from the duration budget (binding.ExecutableRegistry.Invoke and
+//     context from the duration budget (binding.Registry.Invoke and
 //     script.CallContext.context apply identical deadline semantics), and this
 //     function passes ctx.Err() straight through once that deadline elapses.
 //     A nil error means no declared limit has been reached.

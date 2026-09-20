@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/qomos-w/spore/invoke"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,12 +50,14 @@ type VMEvaluator struct {
 // panicked real application workloads (a single ecsbind.World.View envelope
 // at N≥100 or a full app-logic script blows past it), so it served nobody.
 //
-// Contract: exceeding the heap budget after a GC cycle is a panic
-// (vm.allocMemory → vmPanic "out of memory"), not an error return.
-// Embedders that run untrusted or budget-sensitive scripts must set an
-// explicit budget (RuntimeOptions.VMHeapBytes / NewVMEvaluatorWith) and
-// either size it to their workload or recover the panic at their
-// invocation boundary.
+// Contract: exceeding the heap budget after a GC cycle is a Track 1 condition
+// (vm.allocMemory → vmPanic "out of memory"). Because every bytecode entry
+// point converts an escaped panic into a structured *RuntimeError (see doc.go),
+// the caller observes Code "vm_internal_panic" rather than a Go panic. It is
+// still a hard failure — size the budget to the workload (RuntimeOptions
+// .VMHeapBytes / NewVMEvaluatorWith) instead of treating it as a catchable
+// script error; the vm_internal_panic code exists so hosts can tell "the
+// engine hit an invariant" apart from "the script is wrong".
 const (
 	DefaultVMHeapBytes = 4 << 20 // 4 MiB
 	DefaultVMHeapSlots = 256
@@ -93,7 +94,7 @@ type streamSession struct {
 }
 
 // NewVMEvaluator creates a new VM-backed evaluator with the default 4 MiB
-// heap and 256 call-stack slots. It is equivalent to
+// heap and a 256-slot operand-stack reserve. It is equivalent to
 // NewVMEvaluatorWith(0, 0) — zero/negative values mean "use the default".
 func NewVMEvaluator() *VMEvaluator {
 	return NewVMEvaluatorWith(0, 0)
@@ -102,8 +103,10 @@ func NewVMEvaluator() *VMEvaluator {
 // NewVMEvaluatorWith creates a new VM-backed evaluator with a custom VM
 // memory budget. A heapBytes of 0 (or negative) means
 // DefaultVMHeapBytes (4 MiB); a slots of 0 (or negative) means
-// DefaultVMHeapSlots (256). Exceeding the budget after GC panics
-// ("out of memory") — see DefaultVMHeapBytes for the contract.
+// DefaultVMHeapSlots (256). slots seeds the interpreter's single execution
+// stack (which grows on demand). Exceeding the heap budget after GC is a
+// Track 1 condition reported as Code "vm_internal_panic" — see
+// DefaultVMHeapBytes for the contract.
 func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 	heapBytes, slots = resolveVMBudget(heapBytes, slots)
 	v := vm.NewVM(heapBytes, slots)
@@ -124,7 +127,7 @@ func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 }
 
 // VMHeapBudget reports the configured VM memory budget for this evaluator
-// (heap bytes, call-stack slots). Zero means the evaluator was built with
+// (heap bytes, operand-stack slots). Zero means the evaluator was built with
 // the default budget — useful for diagnostics and tests.
 func (e *VMEvaluator) VMHeapBudget() (int, int) {
 	if e == nil {
@@ -319,7 +322,15 @@ func (e *VMEvaluator) Evaluate(callable string, stage invoke.InvocationStage, ar
 	return e.EvaluateContext(context.Background(), invoke.ExecutionBudget{}, callable, stage, args)
 }
 
-func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (any, error) {
+func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (out any, err error) {
+	// Installed first so it also covers argument conversion below: the codec
+	// can panic on an exhausted VM heap, which is Track 1 (see doc.go).
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/evaluate", r)
+			out = nil
+		}
+	}()
 	if e == nil {
 		return nil, fmt.Errorf("callable %q has no evaluator", callable)
 	}
@@ -370,9 +381,25 @@ func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.Executi
 	return vmValueToAnyWithHost(e.hostInterfaces, e.vm_, result), nil
 }
 
+// interpRef returns the interpreter this evaluator owns, or nil when the
+// evaluator itself is nil. Recovery helpers must tolerate a nil evaluator
+// because the panic they handle can predate initialization.
+func (e *VMEvaluator) interpRef() *Interpreter {
+	if e == nil {
+		return nil
+	}
+	return e.interp
+}
+
 // EvaluateUnaryInt executes a compiled unary function with an int argument and projects
 // the benchmark-oriented scalar result without going through the public binding envelope.
-func (e *VMEvaluator) EvaluateUnaryInt(callable string, arg int) (int64, error) {
+func (e *VMEvaluator) EvaluateUnaryInt(callable string, arg int) (out int64, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/evaluate/unary", r)
+			out = 0
+		}
+	}()
 	if e == nil {
 		return 0, fmt.Errorf("callable %q has no evaluator", callable)
 	}
@@ -551,7 +578,15 @@ func (e *VMEvaluator) Invoke(ctx context.Context, callable string, args []any) (
 	return projectInvocationOutcome(callable, outcome)
 }
 
-func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args []vm.Value) (vm.Value, bool, error) {
+func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args []vm.Value) (value vm.Value, ok bool, err error) {
+	// The native bridge reaches VM allocation and codec helpers directly, so
+	// it needs its own boundary (see doc.go).
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/call/native", r)
+			value, ok = vm.EncodeInt(0), false
+		}
+	}()
 	if e == nil || e.nativeBinding == nil {
 		return vm.EncodeInt(0), false, nil
 	}
@@ -624,51 +659,11 @@ func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args 
 			return vmStruct, true, nil
 		}
 	}
-	value, err := anyToVMValueAtPath(e.hostInterfaces, e.vm_, result, "vm/call/native/result")
+	value, err = anyToVMValueAtPath(e.hostInterfaces, e.vm_, result, "vm/call/native/result")
 	if err != nil {
 		return vm.EncodeInt(0), true, err
 	}
 	return value, true, nil
-}
-
-// mapToVMStruct attempts to convert a map[string]any into a VM struct
-// by matching its keys against registered struct field names.
-func (e *VMEvaluator) mapToVMStruct(m map[string]any) (vm.Value, bool) {
-	if e.vm_ == nil || len(m) == 0 || len(e.registeredNativeStructs) == 0 {
-		return vm.EncodeInt(0), false
-	}
-	for name := range e.registeredNativeStructs {
-		sd := e.vm_.StructReg().GetStruct(name)
-		if sd == nil {
-			continue
-		}
-		fields := sd.Fields()
-		if len(fields) != len(m) {
-			continue
-		}
-		match := true
-		for _, f := range fields {
-			if _, ok := m[f.Name()]; !ok {
-				match = false
-				break
-			}
-		}
-		if match {
-			fieldValues := make([]vm.Value, len(fields))
-			for i, f := range fields {
-				val, err := anyToVMValueAtPath(nil, e.vm_, m[f.Name()], "vm/struct/"+name+"/"+f.Name())
-				if err != nil {
-					return vm.EncodeInt(0), false
-				}
-				fieldValues[i] = val
-			}
-			handle := e.vm_.NewStructInstance(name, fieldValues)
-			if handle != vm.InvalidHandle {
-				return vm.EncodeHandle(handle), true
-			}
-		}
-	}
-	return vm.EncodeInt(0), false
 }
 
 func projectInvocationOutcome(callable string, outcome invoke.InvocationOutcome) (any, error) {
@@ -684,7 +679,15 @@ func projectInvocationOutcome(callable string, outcome invoke.InvocationOutcome)
 	return projectNativeResult(outcome.Payload.Value), nil
 }
 
-func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value) (vm.Value, error) {
+func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value) (value vm.Value, err error) {
+	// A recovered panic mid-stream must not leave a resumable cursor behind.
+	defer func() {
+		if r := recover(); r != nil {
+			e.discardStreamSession(callable, args)
+			err = bytecodePanicError(e.interpRef(), callable, "vm/stream/next", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	key := streamSessionKey(callable, args)
 	state, ok := e.sessions[key]
 	if ok {
@@ -719,7 +722,15 @@ func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value
 	return result, nil
 }
 
-func (e *VMEvaluator) executeFinal(callable string, chunk *Chunk, args []vm.Value) (vm.Value, error) {
+func (e *VMEvaluator) executeFinal(callable string, chunk *Chunk, args []vm.Value) (value vm.Value, err error) {
+	// A recovered panic mid-stream must not leave a resumable cursor behind.
+	defer func() {
+		if r := recover(); r != nil {
+			e.discardStreamSession(callable, args)
+			err = bytecodePanicError(e.interpRef(), callable, "vm/stream/final", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	key := streamSessionKey(callable, args)
 	if state, ok := e.sessions[key]; ok {
 		if state.cancelled {
@@ -749,42 +760,6 @@ func streamSessionKey(callable string, args []vm.Value) string {
 	return callable + "|" + strings.Join(parts, ",")
 }
 
-// vmArgPaths pre-builds the per-index argument diagnostic paths; argument
-// lists are short, so the common indices avoid fmt.Sprintf entirely.
-var vmArgPaths = [...]string{
-	"vm/evaluator/argument/0", "vm/evaluator/argument/1",
-	"vm/evaluator/argument/2", "vm/evaluator/argument/3",
-	"vm/evaluator/argument/4", "vm/evaluator/argument/5",
-	"vm/evaluator/argument/6", "vm/evaluator/argument/7",
-}
-
-func vmArgPath(i int) string {
-	if i < len(vmArgPaths) {
-		return vmArgPaths[i]
-	}
-	return "vm/evaluator/argument/" + strconv.Itoa(i)
-}
-
-func toVMArgs(host HostInterfaceResolver, vm_ *vm.VM, args []any) ([]vm.Value, error) {
-	vmArgs := make([]vm.Value, len(args))
-	for i, arg := range args {
-		value, err := anyToVMValueAtPath(host, vm_, arg, vmArgPath(i))
-		if err != nil {
-			return nil, err
-		}
-		vmArgs[i] = value
-	}
-	return vmArgs, nil
-}
-
-func mustToVMArgs(host HostInterfaceResolver, vm_ *vm.VM, args []any) []vm.Value {
-	vmArgs, err := toVMArgs(host, vm_, args)
-	if err != nil {
-		return nil
-	}
-	return vmArgs
-}
-
 func (e *VMEvaluator) SessionsForTest() map[string]*streamSession {
 	return e.sessions
 }
@@ -808,25 +783,15 @@ func cloneVMValues(values []vm.Value) []vm.Value {
 // VM returns the underlying VM instance.
 func (e *VMEvaluator) VM() *vm.VM { return e.vm_ }
 
-// --- Value conversion helpers ---
-
-// HostAnyToVMValue converts a host value into a VM value using the evaluator bridge.
-func HostAnyToVMValue(host HostInterfaceResolver, vm_ *vm.VM, v any, path string) (vm.Value, error) {
-	return anyToVMValueAtPath(host, vm_, v, path)
-}
-
-// HostVMValueToAny converts a VM value back into a host value using the evaluator bridge.
-func HostVMValueToAny(host HostInterfaceResolver, vm_ *vm.VM, v vm.Value) any {
-	return vmValueToAnyWithHost(host, vm_, v)
-}
-
-// HostInterfaceResolver lets script.Runtime surface host-backed proxy objects through the VM bridge.
-type HostInterfaceResolver interface {
-	HostInterfaceHandleForValue(value any) (vm.Handle, bool)
-	HostInterfaceObjectForHandle(handle vm.Handle) (any, bool)
-}
-
-func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (vm.Value, error) {
+func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (value vm.Value, err error) {
+	// The tail call converts a host value into VM memory, which can panic on a
+	// Track 1 condition (exhausted heap), so the boundary applies here too.
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), "", "vm/native-value/load", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	if e == nil {
 		return vm.EncodeInt(0), fmt.Errorf("vm evaluator is not initialized")
 	}
@@ -837,336 +802,9 @@ func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (vm.Value, error) {
 		return vm.EncodeInt(0), fmt.Errorf("native binding is required for imported native value slot %d", slot)
 	}
 	imported := e.importedNativeValues[slot]
-	_, value, ok := e.nativeBinding.FindCapabilityValue(imported.Path, imported.Name)
+	_, nativeValue, ok := e.nativeBinding.FindCapabilityValue(imported.Path, imported.Name)
 	if !ok {
 		return vm.EncodeInt(0), fmt.Errorf("native value %q from capability %q is not registered", imported.Name, imported.Path)
 	}
-	return anyToVMValueAtPath(e.hostInterfaces, e.vm_, value, "vm/evaluator/native-value/"+imported.Path+"/"+imported.Name)
-}
-
-func anyToVMValue(vm_ *vm.VM, v any) (vm.Value, error) {
-	return anyToVMValueAtPath(nil, vm_, v, "vm/evaluator/argument")
-}
-
-func anyToVMValueAtPath(host HostInterfaceResolver, vm_ *vm.VM, v any, path string) (vm.Value, error) {
-	if host != nil {
-		if handle, ok := host.HostInterfaceHandleForValue(v); ok {
-			return vm.EncodeHandle(handle), nil
-		}
-	}
-	switch val := v.(type) {
-	case int:
-		if val < -2147483648 || val > 2147483647 {
-			return vm.EncodeInt(0), &RuntimeError{
-				Code:     "value_out_of_range",
-				Category: diagnostics.CategoryRuntime,
-				Path:     path,
-				Message:  fmt.Sprintf("Go int value %d exceeds script int32 range", val),
-			}
-		}
-		return vm.EncodeInt(int32(val)), nil
-	case int32:
-		return vm.EncodeInt(val), nil
-	case int64:
-		return vm.EncodeLong(val, vm_), nil
-	case uint64:
-		return vm.EncodeULong(val, vm_), nil
-	case float32:
-		return vm.EncodeFloat(val), nil
-	case float64:
-		return vm.EncodeDouble(val, vm_), nil
-	case bool:
-		return vm.EncodeBool(val), nil
-	case string:
-		return vm_.EncodeString(val), nil
-	case time.Time:
-		return vm_.EncodeString(val.Format(time.RFC3339Nano)), nil
-	case []byte:
-		return vm_.EncodeBytes(val), nil
-	case []any:
-		return sliceToVMArray(host, vm_, reflect.ValueOf(val), path)
-	case []map[string]any:
-		return sliceToVMArray(host, vm_, reflect.ValueOf(val), path)
-	case map[string]any:
-		return stringMapToVMMap(host, vm_, reflect.ValueOf(val), path)
-	case nil:
-		return vm.EncodeHandle(vm.InvalidHandle), nil
-	default:
-		rv := reflect.ValueOf(v)
-		if rv.IsValid() {
-			switch rv.Kind() {
-			case reflect.Slice, reflect.Array:
-				return sliceToVMArray(host, vm_, rv, path)
-			case reflect.Map:
-				if rv.Type().Key().Kind() == reflect.String {
-					return stringMapToVMMap(host, vm_, rv, path)
-				}
-			case reflect.Struct:
-				return goStructToVMStruct(host, vm_, rv, path)
-			}
-		}
-		return unsupportedVMArgument(v, path)
-	}
-}
-
-func sliceToVMArray(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
-	arr := vm_.NewArray(vm.TypeInvalid, 0)
-	releaseArrRoot := vm_.AddTemporaryRoot(vm.EncodeHandle(arr))
-	defer releaseArrRoot()
-	for i := 0; i < rv.Len(); i++ {
-		elemVal, err := anyToVMValueAtPath(host, vm_, rv.Index(i).Interface(), path+"/"+strconv.Itoa(i))
-		if err != nil {
-			return vm.EncodeInt(0), err
-		}
-		releaseElemRoot := vm_.AddTemporaryRoot(elemVal)
-		vm_.ArrayPush(arr, elemVal)
-		releaseElemRoot()
-	}
-	return vm.EncodeHandle(arr), nil
-}
-
-func stringMapToVMMap(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
-	m := vm_.NewMap(vm.TypeInvalid, vm.TypeInvalid, rv.Len())
-	// Root the outer map: converting nested values allocates, and an
-	// unrooted map gets swept once the heap crosses its GC threshold —
-	// the reused memory then corrupts the next MapSet ("map is full").
-	releaseRoot := vm_.AddTemporaryRoot(vm.EncodeHandle(m))
-	defer releaseRoot()
-	iter := rv.MapRange()
-	for iter.Next() {
-		keyString := iter.Key().String()
-		elemVal, err := anyToVMValueAtPath(host, vm_, iter.Value().Interface(), path+"/"+keyString)
-		if err != nil {
-			return vm.EncodeInt(0), err
-		}
-		encodedKey := vm_.EncodeString(keyString)
-		// EncodeString may allocate a heap string; root the pending pair so a
-		// GC triggered by that allocation cannot sweep the unstored elemVal.
-		releaseElemRoot := vm_.AddTemporaryRoot(elemVal, encodedKey)
-		vm_.MapSet(m, encodedKey, elemVal)
-		releaseElemRoot()
-	}
-	return vm.EncodeHandle(m), nil
-}
-
-func goStructToVMStruct(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
-	if rv.Kind() == reflect.Pointer {
-		rv = rv.Elem()
-	}
-	if rv.Kind() != reflect.Struct {
-		return unsupportedVMArgument(rv.Interface(), path)
-	}
-	structName := rv.Type().Name()
-	sd := vm_.StructReg().GetStruct(structName)
-	if sd == nil {
-		return unsupportedVMArgument(rv.Interface(), path+"/struct-not-registered:"+structName)
-	}
-	fields := sd.Fields()
-	fieldValues := make([]vm.Value, len(fields))
-	// Root each converted field as it is produced: later field conversions
-	// allocate, and unrooted handles (nested maps/arrays/structs) would be
-	// swept by a mid-conversion GC pass before NewStructInstance stores them.
-	var releases []func()
-	defer func() {
-		for i := len(releases) - 1; i >= 0; i-- {
-			releases[i]()
-		}
-	}()
-	for i, f := range fields {
-		fieldRv := rv.FieldByName(f.Name())
-		if !fieldRv.IsValid() {
-			fieldRv = findFieldByJSONTag(rv, f.Name())
-		}
-		if !fieldRv.IsValid() {
-			return unsupportedVMArgument(rv.Interface(), fmt.Sprintf("%s/field-%s-not-found", path, f.Name()))
-		}
-		val, err := anyToVMValueAtPath(host, vm_, fieldRv.Interface(), path+"/"+f.Name())
-		if err != nil {
-			return vm.EncodeInt(0), err
-		}
-		fieldValues[i] = val
-		releases = append(releases, vm_.AddTemporaryRoot(val))
-	}
-	handle := vm_.NewStructInstance(structName, fieldValues)
-	if handle == vm.InvalidHandle {
-		return unsupportedVMArgument(rv.Interface(), path+"/new-struct-failed")
-	}
-	return vm.EncodeHandle(handle), nil
-}
-
-func findFieldByJSONTag(rv reflect.Value, name string) reflect.Value {
-	typ := rv.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-		tag := field.Tag.Get("json")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		if idx := strings.Index(tag, ","); idx >= 0 {
-			tag = tag[:idx]
-		}
-		if tag == name {
-			return rv.Field(i)
-		}
-	}
-	return reflect.Value{}
-}
-
-func projectNativeResult(v any) any {
-	if v == nil {
-		return nil
-	}
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() {
-		return nil
-	}
-	for rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return nil
-		}
-		rv = rv.Elem()
-	}
-	switch rv.Kind() {
-	case reflect.Slice:
-		if rv.Type().Elem().Kind() == reflect.Uint8 {
-			bytes := make([]byte, rv.Len())
-			reflect.Copy(reflect.ValueOf(bytes), rv)
-			return bytes
-		}
-		items := make([]any, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			items[i] = projectNativeResult(rv.Index(i).Interface())
-		}
-		return items
-	case reflect.Struct:
-		if rv.Type() == reflect.TypeOf(time.Time{}) {
-			return rv.Interface().(time.Time).Format(time.RFC3339Nano)
-		}
-		result := make(map[string]any, rv.NumField())
-		rt := rv.Type()
-		for i := 0; i < rv.NumField(); i++ {
-			field := rt.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-			name := invoke.JSONTagName(field)
-			if name == "-" {
-				continue
-			}
-			result[name] = projectNativeResult(rv.Field(i).Interface())
-		}
-		return result
-	case reflect.Array:
-		items := make([]any, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			items[i] = projectNativeResult(rv.Index(i).Interface())
-		}
-		return items
-	case reflect.Map:
-		if rv.Type().Key().Kind() == reflect.String {
-			result := make(map[string]any, rv.Len())
-			iter := rv.MapRange()
-			for iter.Next() {
-				result[iter.Key().String()] = projectNativeResult(iter.Value().Interface())
-			}
-			return result
-		}
-	}
-	return v
-}
-
-func unsupportedVMArgument(v any, path string) (vm.Value, error) {
-	return vm.EncodeInt(0), &RuntimeError{
-		Code:     "unsupported_vm_argument_type",
-		Category: diagnostics.CategoryRuntime,
-		Path:     path,
-		Message:  fmt.Sprintf("unsupported VM argument type %T", v),
-	}
-}
-
-func vmValueToAny(v_ *vm.VM, v vm.Value) any {
-	return vmValueToAnyWithHost(nil, v_, v)
-}
-
-func vmValueToAnyWithHost(host HostInterfaceResolver, v_ *vm.VM, v vm.Value) any {
-	if vm.IsDouble(v) {
-		return v_.DecodeDouble(v)
-	}
-	if vm.IsNull(v) {
-		return nil
-	}
-	if vm.IsBool(v) {
-		return vm.DecodeBool(v)
-	}
-	if vm.IsLong(v) {
-		return v_.DecodeLong(v)
-	}
-	if vm.IsULong(v) {
-		return v_.DecodeULong(v)
-	}
-	if vm.IsInt(v) {
-		return int(vm.DecodeInt(v))
-	}
-	if vm.IsFloat(v) {
-		return float64(vm.DecodeFloat(v))
-	}
-	if vm.IsBytes(v) {
-		return v_.DecodeBytes(v)
-	}
-	if vm.IsString(v) {
-		return v_.DecodeString(v)
-	}
-	if vm.IsHandle(v) {
-		h := vm.DecodeHandle(v)
-		if host != nil {
-			if target, ok := host.HostInterfaceObjectForHandle(h); ok {
-				return target
-			}
-		}
-		idx := v_.ResolveHandle(h)
-		if idx >= 0 && idx < v_.MemTop() {
-			header := v_.MemoryAt(idx)
-			if v_.IsLongHeapHeader(header) {
-				return v_.DecodeLong(v)
-			}
-			if v_.IsULongHeapHeader(header) {
-				return v_.DecodeULong(v)
-			}
-			if v_.IsLargeStringHeader(header) {
-				return v_.DecodeString(v)
-			}
-			if v_.IsLargeBytesHeader(header) {
-				return v_.DecodeBytes(v)
-			}
-			if v_.IsMap(h) {
-				result := make(map[string]any)
-				v_.MapIterate(h, func(key, val vm.Value) bool {
-					result[v_.DecodeString(key)] = vmValueToAnyWithHost(host, v_, val)
-					return true
-				})
-				return result
-			}
-			if v_.IsStruct(h) {
-				sd := v_.StructReg().GetStructByID(uint32(v_.MemoryAt(idx)>>32) & 0x3FFFFFFF)
-				if sd != nil {
-					result := make(map[string]any, sd.FieldCount())
-					fields := sd.Fields()
-					for i := 0; i < sd.FieldCount(); i++ {
-						result[fields[i].Name()] = vmValueToAnyWithHost(host, v_, v_.GetStructFieldByIndex(h, i))
-					}
-					return result
-				}
-			}
-			length := v_.ArrayLength(h)
-			items := make([]any, length)
-			for i := 0; i < length; i++ {
-				items[i] = vmValueToAnyWithHost(host, v_, v_.GetArrayElement(h, i))
-			}
-			return items
-		}
-	}
-	return nil
+	return anyToVMValueAtPath(e.hostInterfaces, e.vm_, nativeValue, "vm/evaluator/native-value/"+imported.Path+"/"+imported.Name)
 }
