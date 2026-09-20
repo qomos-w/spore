@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/qomos-w/spore/binding"
+	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/internal/script/bytecode"
 	"github.com/qomos-w/spore/internal/script/vm"
 	"github.com/qomos-w/spore/schema"
@@ -184,6 +185,22 @@ func hostInterfaceProxyClassName(namespace, name string) string {
 	return "__host_iface__" + namespace + "__" + name
 }
 
+// invokeHostInterfaceMethod dispatches a script-side method call on a bound
+// host interface proxy to its Go target.
+//
+// Failure contract: this code runs inside a vm class-method body, a seam whose
+// signature carries a value only, so failures are raised as panics and are
+// unwrapped back into structured errors by the bytecode boundary recovery
+// (internal/script/bytecode/panic_recovery.go). The two kinds are deliberately
+// separated:
+//
+//   - the receiver and method lookups are invariants (a proxy handle no ledger
+//     record backs, or a method the proxy class never registered). They panic
+//     with a plain message and surface as the vm_internal_panic code;
+//   - a host target that returned an error, or a result the codec cannot turn
+//     into a VM value, is recoverable, so it panics with a *bytecode.RuntimeError
+//     that keeps its real diagnostic code (native_call_failed, or whatever the
+//     host error already carried / unsupported_vm_argument_type).
 func (rt *Runtime) invokeHostInterfaceMethod(receiver vm.Handle, methodName string, args []vm.Value) vm.Value {
 	obj, ok := rt.hostInterfaceObjectForHandle(receiver)
 	if !ok {
@@ -199,16 +216,42 @@ func (rt *Runtime) invokeHostInterfaceMethod(receiver vm.Handle, methodName stri
 	}
 	results, err := binding.InvokeGoFunctionForHostProxy(method, goArgs)
 	if err != nil {
-		panic(err)
+		panic(hostInterfaceCallFailed(methodName, obj.Target, err))
 	}
 	if len(results) == 0 {
 		return vm.EncodeHandle(vm.InvalidHandle)
 	}
 	out, err := bytecode.HostAnyToVMValue(rt, rt.evaluator.VM(), results[0], "vm/evaluator/host-interface-method/"+methodName)
 	if err != nil {
+		// HostAnyToVMValue already reports *bytecode.RuntimeError
+		// (unsupported_vm_argument_type); raise it as the structured panic the
+		// boundary unwraps, so the code survives.
 		panic(err)
 	}
 	return out
+}
+
+// hostInterfaceCallFailed wraps a failing bound Go method in the same stable
+// code the native-callable path uses (native_call_failed), so a host can branch
+// on one code for "a bound Go function raised an error" whether the target was
+// reached as a native callable or through an interface proxy. A host error that
+// already carries a structured diagnostic code keeps it — the fallback only
+// supplies the code for plain errors.
+func hostInterfaceCallFailed(methodName string, target any, err error) *bytecode.RuntimeError {
+	diag := diagnostics.FromError(err, diagnostics.Descriptor{
+		Category: diagnostics.CategoryHost,
+		Code:     "native_call_failed",
+		Path:     "vm/call/host-interface",
+		Message:  fmt.Sprintf("host interface method %s on %T failed: %v", methodName, target, err),
+	})
+	return &bytecode.RuntimeError{
+		Code:     diag.Code,
+		Category: diag.Category,
+		Path:     diag.Path,
+		Message:  diag.Message,
+		Stack:    diag.Stack,
+		Cause:    diag.Cause,
+	}
 }
 
 func exportedMethodName(name string) string {

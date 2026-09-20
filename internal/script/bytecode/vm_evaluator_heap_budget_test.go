@@ -13,7 +13,9 @@ import (
 // The default VM is 4 MiB of flat heap plus 256 call-stack slots; hosts
 // can opt into a different size via NewVMEvaluatorWith (and embedders via
 // RuntimeOptions.VMHeapBytes). These tests pin the default and exercise
-// the opt-in path, including the documented panic-on-OOM contract.
+// the opt-in path, including the raw codec's panic-on-OOM behaviour (the
+// evaluator boundary converts that panic into a structured vm_internal_panic
+// error for every real caller — see doc.go and panic_recovery_test.go).
 
 func TestVMEvaluator_DefaultVMBudgetPinned(t *testing.T) {
 	eval := NewVMEvaluator()
@@ -91,12 +93,17 @@ func intToDec(n int) string {
 	return string(b[i:])
 }
 
-// TestVMEvaluator_SmallBudgetOOMsOnLargeNestedEnvelope pins the
-// panic-on-OOM contract: a VM whose heap is too small to materialise the
+// TestVMEvaluator_SmallBudgetOOMsOnLargeNestedEnvelope pins the codec-level
+// panic-on-OOM behaviour: a VM whose heap is too small to materialise the
 // deeply-nested ecsbind.World.View envelope panics with "out of memory"
-// after GC. It uses an explicit small budget (the historical 64 KiB
-// default) rather than DefaultVMHeapBytes so the contract test stays
-// deterministic regardless of the documented default's size.
+// after GC. It calls the raw conversion helper (anyToVMValue) directly, below
+// the evaluator boundary, which is why the panic is observable here at all;
+// any call through an evaluator entry point reports the same condition as a
+// structured vm_internal_panic RuntimeError (see
+// TestVMEvaluator_OOMConvertedToStructuredErrorAndEvaluationContinues). It
+// uses an explicit small budget (the historical 64 KiB default) rather than
+// DefaultVMHeapBytes so the contract test stays deterministic regardless of
+// the documented default's size.
 //
 // N is chosen so that even with a (somewhat) aggressive VM garbage collector
 // the test reliably OOMs; smaller N values may succeed on a small budget

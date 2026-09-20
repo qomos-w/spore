@@ -1,1 +1,2 @@
 diagnostics/testdata/*.txt -text
+internal/script/bytecode/testdata/golden/*.txt -text

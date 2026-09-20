@@ -50,12 +50,14 @@ type VMEvaluator struct {
 // panicked real application workloads (a single ecsbind.World.View envelope
 // at N≥100 or a full app-logic script blows past it), so it served nobody.
 //
-// Contract: exceeding the heap budget after a GC cycle is a panic
-// (vm.allocMemory → vmPanic "out of memory"), not an error return.
-// Embedders that run untrusted or budget-sensitive scripts must set an
-// explicit budget (RuntimeOptions.VMHeapBytes / NewVMEvaluatorWith) and
-// either size it to their workload or recover the panic at their
-// invocation boundary.
+// Contract: exceeding the heap budget after a GC cycle is a Track 1 condition
+// (vm.allocMemory → vmPanic "out of memory"). Because every bytecode entry
+// point converts an escaped panic into a structured *RuntimeError (see doc.go),
+// the caller observes Code "vm_internal_panic" rather than a Go panic. It is
+// still a hard failure — size the budget to the workload (RuntimeOptions
+// .VMHeapBytes / NewVMEvaluatorWith) instead of treating it as a catchable
+// script error; the vm_internal_panic code exists so hosts can tell "the
+// engine hit an invariant" apart from "the script is wrong".
 const (
 	DefaultVMHeapBytes = 4 << 20 // 4 MiB
 	DefaultVMHeapSlots = 256
@@ -102,8 +104,9 @@ func NewVMEvaluator() *VMEvaluator {
 // memory budget. A heapBytes of 0 (or negative) means
 // DefaultVMHeapBytes (4 MiB); a slots of 0 (or negative) means
 // DefaultVMHeapSlots (256). slots seeds the interpreter's single execution
-// stack (which grows on demand). Exceeding the heap budget after GC panics
-// ("out of memory") — see DefaultVMHeapBytes for the contract.
+// stack (which grows on demand). Exceeding the heap budget after GC is a
+// Track 1 condition reported as Code "vm_internal_panic" — see
+// DefaultVMHeapBytes for the contract.
 func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 	heapBytes, slots = resolveVMBudget(heapBytes, slots)
 	v := vm.NewVM(heapBytes, slots)
@@ -319,7 +322,15 @@ func (e *VMEvaluator) Evaluate(callable string, stage invoke.InvocationStage, ar
 	return e.EvaluateContext(context.Background(), invoke.ExecutionBudget{}, callable, stage, args)
 }
 
-func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (any, error) {
+func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (out any, err error) {
+	// Installed first so it also covers argument conversion below: the codec
+	// can panic on an exhausted VM heap, which is Track 1 (see doc.go).
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/evaluate", r)
+			out = nil
+		}
+	}()
 	if e == nil {
 		return nil, fmt.Errorf("callable %q has no evaluator", callable)
 	}
@@ -370,9 +381,25 @@ func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.Executi
 	return vmValueToAnyWithHost(e.hostInterfaces, e.vm_, result), nil
 }
 
+// interpRef returns the interpreter this evaluator owns, or nil when the
+// evaluator itself is nil. Recovery helpers must tolerate a nil evaluator
+// because the panic they handle can predate initialization.
+func (e *VMEvaluator) interpRef() *Interpreter {
+	if e == nil {
+		return nil
+	}
+	return e.interp
+}
+
 // EvaluateUnaryInt executes a compiled unary function with an int argument and projects
 // the benchmark-oriented scalar result without going through the public binding envelope.
-func (e *VMEvaluator) EvaluateUnaryInt(callable string, arg int) (int64, error) {
+func (e *VMEvaluator) EvaluateUnaryInt(callable string, arg int) (out int64, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/evaluate/unary", r)
+			out = 0
+		}
+	}()
 	if e == nil {
 		return 0, fmt.Errorf("callable %q has no evaluator", callable)
 	}
@@ -551,7 +578,15 @@ func (e *VMEvaluator) Invoke(ctx context.Context, callable string, args []any) (
 	return projectInvocationOutcome(callable, outcome)
 }
 
-func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args []vm.Value) (vm.Value, bool, error) {
+func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args []vm.Value) (value vm.Value, ok bool, err error) {
+	// The native bridge reaches VM allocation and codec helpers directly, so
+	// it needs its own boundary (see doc.go).
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), callable, "vm/call/native", r)
+			value, ok = vm.EncodeInt(0), false
+		}
+	}()
 	if e == nil || e.nativeBinding == nil {
 		return vm.EncodeInt(0), false, nil
 	}
@@ -624,7 +659,7 @@ func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args 
 			return vmStruct, true, nil
 		}
 	}
-	value, err := anyToVMValueAtPath(e.hostInterfaces, e.vm_, result, "vm/call/native/result")
+	value, err = anyToVMValueAtPath(e.hostInterfaces, e.vm_, result, "vm/call/native/result")
 	if err != nil {
 		return vm.EncodeInt(0), true, err
 	}
@@ -644,7 +679,15 @@ func projectInvocationOutcome(callable string, outcome invoke.InvocationOutcome)
 	return projectNativeResult(outcome.Payload.Value), nil
 }
 
-func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value) (vm.Value, error) {
+func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value) (value vm.Value, err error) {
+	// A recovered panic mid-stream must not leave a resumable cursor behind.
+	defer func() {
+		if r := recover(); r != nil {
+			e.discardStreamSession(callable, args)
+			err = bytecodePanicError(e.interpRef(), callable, "vm/stream/next", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	key := streamSessionKey(callable, args)
 	state, ok := e.sessions[key]
 	if ok {
@@ -679,7 +722,15 @@ func (e *VMEvaluator) executeNext(callable string, chunk *Chunk, args []vm.Value
 	return result, nil
 }
 
-func (e *VMEvaluator) executeFinal(callable string, chunk *Chunk, args []vm.Value) (vm.Value, error) {
+func (e *VMEvaluator) executeFinal(callable string, chunk *Chunk, args []vm.Value) (value vm.Value, err error) {
+	// A recovered panic mid-stream must not leave a resumable cursor behind.
+	defer func() {
+		if r := recover(); r != nil {
+			e.discardStreamSession(callable, args)
+			err = bytecodePanicError(e.interpRef(), callable, "vm/stream/final", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	key := streamSessionKey(callable, args)
 	if state, ok := e.sessions[key]; ok {
 		if state.cancelled {
@@ -732,7 +783,15 @@ func cloneVMValues(values []vm.Value) []vm.Value {
 // VM returns the underlying VM instance.
 func (e *VMEvaluator) VM() *vm.VM { return e.vm_ }
 
-func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (vm.Value, error) {
+func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (value vm.Value, err error) {
+	// The tail call converts a host value into VM memory, which can panic on a
+	// Track 1 condition (exhausted heap), so the boundary applies here too.
+	defer func() {
+		if r := recover(); r != nil {
+			err = bytecodePanicError(e.interpRef(), "", "vm/native-value/load", r)
+			value = vm.EncodeInt(0)
+		}
+	}()
 	if e == nil {
 		return vm.EncodeInt(0), fmt.Errorf("vm evaluator is not initialized")
 	}
@@ -743,9 +802,9 @@ func (e *VMEvaluator) ResolveImportedNativeValue(slot int) (vm.Value, error) {
 		return vm.EncodeInt(0), fmt.Errorf("native binding is required for imported native value slot %d", slot)
 	}
 	imported := e.importedNativeValues[slot]
-	_, value, ok := e.nativeBinding.FindCapabilityValue(imported.Path, imported.Name)
+	_, nativeValue, ok := e.nativeBinding.FindCapabilityValue(imported.Path, imported.Name)
 	if !ok {
 		return vm.EncodeInt(0), fmt.Errorf("native value %q from capability %q is not registered", imported.Name, imported.Path)
 	}
-	return anyToVMValueAtPath(e.hostInterfaces, e.vm_, value, "vm/evaluator/native-value/"+imported.Path+"/"+imported.Name)
+	return anyToVMValueAtPath(e.hostInterfaces, e.vm_, nativeValue, "vm/evaluator/native-value/"+imported.Path+"/"+imported.Name)
 }

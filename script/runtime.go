@@ -28,6 +28,19 @@
 //   - Result.Unwrap() = default convenience collapse for callers that do not
 //     need to distinguish the two layers
 //
+// Execution-error tracks (see internal/script/bytecode/doc.go for the engine
+// side, which is the contract this surface mirrors):
+//
+//   - script-repairable failures (division by zero, failed casts, bad indices,
+//     a bound Go function returning an error, exhausted streams) arrive as a
+//     Result.Error whose Diagnostic.Code is the stable code for that condition.
+//   - engine-internal invariant violations (VM heap budget exhausted, stale
+//     handles, missing descriptors) arrive as a Result.Error too, with the
+//     stable code "vm_internal_panic". Call never panics: the bytecode boundary
+//     converts every escaped panic into that structured error, so a host does
+//     not need its own recover() around Call. Treat vm_internal_panic as "file
+//     a bug against the engine", not as something a script can fix.
+//
 // Sub-packages a host may need to import for deeper inspection (the script
 // package re-uses their types in its public fields rather than mirroring
 // them, on purpose):
@@ -100,10 +113,13 @@ type RuntimeOptions struct {
 	// DefaultVMHeapBytes (4 MiB); positive values scale the flat VM heap
 	// to accommodate workloads that materialise deeply-nested values such
 	// as ecsbind.World.View's map<string, []map<string, any>> envelope at
-	// large N. Exceeding the budget after GC panics ("out of memory") —
-	// budget-sensitive embedders must set this explicitly and recover at
-	// their invocation boundary. It is preserved across Clone and Reset so
-	// a runtime rebuilt mid-session keeps its budget.
+	// large N. Exceeding the budget after GC is reported as a structured
+	// runtime error with code "vm_internal_panic" — the evaluator boundary
+	// converts the VM's out-of-memory panic (see the package doc's
+	// execution-error tracks) — so it is a hard failure, not a script bug:
+	// budget-sensitive embedders must still size this explicitly. It is
+	// preserved across Clone and Reset so a runtime rebuilt mid-session
+	// keeps its budget.
 	VMHeapBytes int
 	// VMHeapSlots overrides the operand-stack capacity used by the
 	// underlying bytecode evaluator's single execution stack. A value of

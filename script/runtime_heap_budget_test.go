@@ -10,12 +10,15 @@ import (
 // --- Runtime VM-memory-budget knob ---
 //
 // The default script.Runtime budget is DefaultVMHeapBytes (4 MiB since
-// v0.1.2; 64 KiB before). Exceeding the budget after GC panics with
-// "out of memory" — a documented contract, not an accident: budget-
-// sensitive hosts must set RuntimeOptions.VMHeapBytes / VMHeapSlots
-// explicitly and recover at their call boundary. These tests pin the
-// default's numeric value and exercise the explicit-budget path
-// end-to-end through the public embedding surface.
+// v0.1.2; 64 KiB before). Exceeding the budget after GC is a VM-internal
+// invariant violation, and since the error-model convergence the evaluator
+// boundary reports it as a structured runtime error with code
+// "vm_internal_panic" instead of letting the VM's panic escape into the
+// host — Call never panics. Budget-sensitive hosts must still set
+// RuntimeOptions.VMHeapBytes / VMHeapSlots explicitly and treat
+// vm_internal_panic as a hard engine-side failure. These tests pin the
+// default's numeric value and exercise the explicit-budget path end-to-end
+// through the public embedding surface.
 
 // buildLargeNestedBatchEnvelope mirrors the ecsbind.World.View return shape
 // ("ids": []string, "data": map<string, []map<string, any>>) at large N.
@@ -51,13 +54,18 @@ func intToDec(n int) string {
 	return string(b[i:])
 }
 
-// TestRuntime_SmallBudgetPanicsOnLargeNestedReturn pins the panic-on-OOM
-// contract at the Runtime level: a Runtime whose VM heap is too small for
-// the deeply-nested ecsbind.World.View envelope panics during Call. It
-// sets an explicit small budget (the historical 64 KiB default) rather
+// TestRuntime_VMInternalPanicConvertedToRuntimeError pins the boundary
+// contract introduced by the #29 error-model convergence: a Runtime whose VM
+// heap is too small for the deeply-nested ecsbind.World.View envelope makes
+// the VM raise its internal "out of memory" panic, and Call must report that
+// as a structured runtime error (Diagnostic.Code "vm_internal_panic") rather
+// than letting the panic escape into the caller. Before the convergence this
+// call panicked, which is exactly why sporemind needed a per-invoke recover.
+//
+// It sets an explicit small budget (the historical 64 KiB default) rather
 // than relying on DefaultVMHeapBytes so the contract test stays
 // deterministic regardless of the documented default's size.
-func TestRuntime_SmallBudgetPanicsOnLargeNestedReturn(t *testing.T) {
+func TestRuntime_VMInternalPanicConvertedToRuntimeError(t *testing.T) {
 	rt, err := script.NewRuntimeWith(script.RuntimeOptions{VMHeapBytes: 65536, VMHeapSlots: 256})
 	if err != nil {
 		t.Fatalf("NewRuntime: %v", err)
@@ -82,17 +90,21 @@ export fun count(): int {
 		t.Fatalf("LoadSource: %v", err)
 	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected VM OOM panic on small-budget Runtime, got none")
-		}
-	}()
 	result, err := rt.Call("count")
 	if err != nil {
-		// Defensive: anyToVMValue currently propagates VM panics as panics,
-		// not as script errors; this branch keeps the test honest if that
-		// ever changes.
-		t.Fatalf("unexpected error before OOM: %v (result=%+v)", err, result)
+		t.Fatalf("Call reported a host-level failure %v, want a structured runtime error", err)
+	}
+	if result.Error == nil {
+		t.Fatalf("expected a structured runtime error for the VM OOM, got value %#v", result.Value)
+	}
+	if !script.IsRuntimeError(result.Error) {
+		t.Fatalf("expected script.RuntimeError, got %T", result.Error)
+	}
+	if got := result.Error.Diagnostic.Code; got != "vm_internal_panic" {
+		t.Fatalf("diagnostic code = %q, want vm_internal_panic", got)
+	}
+	if msg := result.Error.Diagnostic.Message; !strings.Contains(msg, "out of memory") {
+		t.Fatalf("diagnostic message %q should keep the VM's panic text", msg)
 	}
 }
 

@@ -35,8 +35,15 @@ func (c *compiler) registerFunctions(v *vm.VM, interp *Interpreter) {
 		body := vm.NewBytecodeFunctionBody(func(v *vm.VM, args []vm.Value) vm.Value {
 			result, err := capturedInterp.ExecuteFunction(capturedChunk, invoke.InvocationStageUnary, args)
 			if err != nil {
-				v.Panic(fmt.Sprintf("runtime error in %s: %s", name, err.Error()))
-				return vm.EncodeInt(0) // unreachable
+				// The vm package invokes registered bodies through a value-only
+				// seam, so there is no error return for a RuntimeError to
+				// travel on. Panic with the structured error itself: the
+				// bytecode boundary recovery (see doc.go and panic_recovery.go)
+				// unwraps it back into the very same *RuntimeError, preserving
+				// its code/path/stack instead of degrading it to a generic
+				// vm_internal_panic. Panicking with err.Error() here would lose
+				// the diagnostic identity.
+				panic(err)
 			}
 			return result
 		})
