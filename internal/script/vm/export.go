@@ -60,7 +60,9 @@ const (
 
 // --- Exported constructors ---
 
-// NewVM creates a new VM instance.
+// NewVM creates a new VM instance. stackSize is the operand-stack capacity
+// handed to the interpreter's single execution stack (see
+// VM.OperandStackCapacity); it no longer sizes a VM-owned stack.
 func NewVM(memorySize, stackSize int) *VM {
 	return newVM(memorySize, stackSize)
 }
@@ -329,11 +331,10 @@ func (s *StructDef) Name() string { return s.name }
 // FieldCount returns the number of fields in the struct.
 func (s *StructDef) FieldCount() int { return s.fieldCount }
 
-// Push pushes a value onto the stack.
-func (v *VM) Push(val Value) { v.push(val) }
-
-// Pop pops a value from the stack.
-func (v *VM) Pop() Value { return v.pop() }
+// OperandStackCapacity reports the operand-stack capacity configured for the
+// interpreter's single execution stack. The VM owns no operand stack itself;
+// the interpreter (bytecode package) sizes its stack from this value.
+func (v *VM) OperandStackCapacity() int { return v.stackCapacity }
 
 // DecodeString decodes a string value.
 func (v *VM) DecodeString(val Value) string { return v.decodeString(val) }
@@ -362,7 +363,8 @@ func (v *VM) SetField(obj Handle, fieldName string, val Value) { v.setField(obj,
 // ResolveHandle returns the memory index for a handle.
 func (v *VM) ResolveHandle(h Handle) int { return v.resolveHandle(h) }
 
-// AddRootProvider registers additional GC roots owned outside vm.stack.
+// AddRootProvider registers additional GC roots owned outside VM memory
+// (e.g. the interpreter's operand stack).
 func (v *VM) AddRootProvider(provider RootProvider) int {
 	return v.addRootProvider(rootProvider(provider))
 }
