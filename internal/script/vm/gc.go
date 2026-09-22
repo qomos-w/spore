@@ -52,6 +52,11 @@ func (g *gc) mark() {
 		}
 		provider(g.markValue)
 	}
+	for _, provider := range g.vm.rootSlots {
+		if provider != nil {
+			provider(g.markValue)
+		}
+	}
 }
 
 func (g *gc) markValue(v value) {

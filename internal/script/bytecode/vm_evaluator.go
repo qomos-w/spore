@@ -643,7 +643,9 @@ func (e *VMEvaluator) InvokeVMNative(ctx context.Context, callable string, args 
 			rv = rv.Elem()
 		}
 		if rv.Kind() == reflect.Struct && rv.Type() != reflect.TypeOf(time.Time{}) {
-			vmVal, err := goStructToVMStruct(e.hostInterfaces, e.vm_, rv, "vm/call/native/result")
+			c := acquireConvCtx(e.hostInterfaces, e.vm_, "vm/call/native/result")
+			vmVal, err := c.goStruct(rv)
+			releaseConvCtx(c)
 			if err == nil {
 				return vmVal, true, nil
 			}

@@ -22,8 +22,9 @@ func (interp *Interpreter) invokeNative(callable string, args []vm.Value) (vm.Va
 	if interp.nativeInvoker == nil {
 		return vm.EncodeInt(0), false, nil
 	}
-	releaseArgRoots := interp.vm_.AddTemporaryRoot(args...)
-	defer releaseArgRoots()
+	scope := interp.vm_.BeginRootScope()
+	scope.Add(args...)
+	defer scope.End()
 	result, ok, err := interp.nativeInvoker.InvokeVMNative(context.Background(), callable, args)
 	if err != nil {
 		return vm.EncodeInt(0), ok, wrapNativeInvocationError(callable, interp.function, interp.lineForIP(), err)

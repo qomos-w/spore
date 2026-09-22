@@ -30,13 +30,14 @@ func (v *vm) newArray(elemType typeID, length int) handle {
 		capacity = 4
 	}
 	storage := v.newArrayStorage(capacity)
-	releaseStorageRoot := v.addTemporaryRoot(encodeHandle(storage))
-	defer releaseStorageRoot()
+	scope := v.beginRootScope()
+	scope.add(encodeHandle(storage))
 	idx := v.allocMemory(arrayHeaderSize)
 	v.memory[idx+0] = encodeArrayHeader(elemType)
 	v.memory[idx+1] = uint64(length)
 	v.memory[idx+2] = uint64(capacity)
 	v.memory[idx+3] = uint64(encodeHandle(storage))
+	scope.end()
 	return v.createHandle(idx)
 }
 
@@ -83,9 +84,10 @@ func (v *vm) arrayPush(arr handle, val value) {
 	capacity := int(v.memory[arrIdx+2])
 	if length >= capacity {
 		// Only need GC roots while allocating; the fast path skips them.
-		releaseRoots := v.addTemporaryRoot(encodeHandle(arr), val)
+		scope := v.beginRootScope()
+		scope.add(encodeHandle(arr), val)
 		v.arrayGrow(arr)
-		releaseRoots()
+		scope.end()
 		arrIdx = v.getMemoryIndex(arr)
 	}
 	v.memory[arrIdx+1] = uint64(length + 1)
@@ -94,11 +96,11 @@ func (v *vm) arrayPush(arr handle, val value) {
 }
 
 func (v *vm) arrayGrow(arr handle) {
-	// Use explicit root management instead of defer+closure to avoid heap
-	// allocations on every grow (each defer/closure pair is ~2 allocs).
-	arrRootID := v.addRootProvider(func(mark func(value)) {
-		mark(encodeHandle(arr))
-	})
+	// One batched root scope covers the header, the old storage (copied
+	// from) and the new storage (copied into) across the reallocation.
+	scope := v.beginRootScope()
+	defer scope.end()
+	scope.add(encodeHandle(arr))
 
 	arrIdx := v.getMemoryIndex(arr)
 	length := int(v.memory[arrIdx+1])
@@ -109,23 +111,15 @@ func (v *vm) arrayGrow(arr handle) {
 	}
 	oldStorageIdx := v.getArrayStorageIndex(arrIdx)
 	oldStorage := value(v.memory[arrIdx+3])
-	oldStorageRootID := v.addRootProvider(func(mark func(value)) {
-		mark(oldStorage)
-	})
+	scope.add(oldStorage)
 	newStorage := v.newArrayStorage(newCapacity)
-	newStorageRootID := v.addRootProvider(func(mark func(value)) {
-		mark(encodeHandle(newStorage))
-	})
+	scope.add(encodeHandle(newStorage))
 	newStorageIdx := v.getMemoryIndex(newStorage)
 	for i := 0; i < length; i++ {
 		v.memory[newStorageIdx+1+i] = v.memory[oldStorageIdx+1+i]
 	}
 	v.memory[arrIdx+2] = uint64(newCapacity)
 	v.memory[arrIdx+3] = uint64(encodeHandle(newStorage))
-
-	v.removeRootProvider(newStorageRootID)
-	v.removeRootProvider(oldStorageRootID)
-	v.removeRootProvider(arrRootID)
 }
 
 func (v *vm) getArrayStorageIndex(arrIdx int) int {

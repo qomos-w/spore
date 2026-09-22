@@ -1,7 +1,5 @@
 package vm
 
-import "hash/fnv"
-
 // stringPool manages string interning and storage.
 // Three tiers: small (inline ≤6 bytes), medium (7-256 bytes in byte pool),
 // large (>256 bytes in a separate flat byte pool referenced by a 3-slot
@@ -48,22 +46,75 @@ func (sp *stringPool) internBytes(data []byte) value {
 }
 
 // intern adds a string to the pool and returns its encoded value.
+// String-native paths: the hit path allocates nothing (no []byte copy, no
+// hasher object), which matters because host->VM conversion interns every
+// map key and string leaf per frame.
 func (sp *stringPool) intern(s string) value {
-	data := []byte(s)
-	length := len(data)
+	length := len(s)
 
 	// Small string: inline (≤6 bytes)
 	if length <= 6 {
-		return encodeSmallString(data)
+		return encodeSmallStringNative(s)
 	}
 
 	// Medium string: byte pool (7-256 bytes)
 	if length <= 256 {
-		return sp.internMedium(data)
+		return sp.internMediumString(s)
 	}
 
 	// Large string: flat byte pool, 3-slot header in VM main memory
-	return sp.internLarge(data)
+	return sp.internLargeString(s)
+}
+
+// encodeSmallStringNative encodes a string of at most 6 bytes without going
+// through a []byte conversion. Bit layout matches encodeSmallString.
+func encodeSmallStringNative(s string) value {
+	payload := uint64(len(s))
+	for i := 0; i < len(s); i++ {
+		payload |= uint64(s[i]) << (4 + 8*i)
+	}
+	return makeBox(tagSmallStr, payload)
+}
+
+func (sp *stringPool) internMediumString(s string) value {
+	hash := hashString(s)
+
+	// Check if already interned.
+	if entries, ok := sp.index[hash]; ok {
+		for _, entry := range entries {
+			if sp.stringEqualsString(entry, s) {
+				return encodeMediumString(entry.offset, entry.length)
+			}
+		}
+	}
+
+	// Append to byte pool.
+	offset := uint32(len(sp.medium))
+	sp.medium = append(sp.medium, s...)
+
+	entry := stringEntry{
+		offset: offset,
+		length: uint32(len(s)),
+		hash:   hash,
+	}
+
+	sp.index[hash] = append(sp.index[hash], entry)
+	return encodeMediumString(offset, uint32(len(s)))
+}
+
+// internLargeString stores a large string in the flat byte pool and writes a
+// 3-slot header into VM main memory.
+func (sp *stringPool) internLargeString(s string) value {
+	offset := uint64(len(sp.large))
+	sp.large = append(sp.large, s...)
+
+	idx := sp.vm.allocMemory(largeStringHeaderSize)
+	sp.vm.memory[idx+0] = encodeLargeStringHeader()
+	sp.vm.memory[idx+1] = offset
+	sp.vm.memory[idx+2] = uint64(len(s))
+
+	h := sp.vm.createHandle(idx)
+	return encodeHandle(h)
 }
 
 func (sp *stringPool) internMedium(data []byte) value {
@@ -190,10 +241,36 @@ func (sp *stringPool) stringEquals(entry stringEntry, data []byte) bool {
 	return true
 }
 
+func (sp *stringPool) stringEqualsString(entry stringEntry, s string) bool {
+	if entry.length != uint32(len(s)) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if sp.medium[entry.offset+uint32(i)] != s[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func hashBytes(data []byte) uint32 {
-	h := fnv.New32a()
-	h.Write(data)
-	return h.Sum32()
+	h := uint32(2166136261)
+	for _, c := range data {
+		h ^= uint32(c)
+		h *= 16777619
+	}
+	return h
+}
+
+// hashString computes the same FNV-1a 32-bit hash as hashBytes without
+// copying the string into a byte slice.
+func hashString(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
 }
 
 // --- Medium string encoding ---

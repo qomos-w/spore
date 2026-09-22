@@ -38,6 +38,16 @@ type vm struct {
 	rootProviderOrder  []int
 	nextRootProviderID int
 
+	// Temporary-root machinery: slot table + pooled scopes. Registering a
+	// temporary root must not allocate in steady state (conversion loops
+	// acquire/release per element), so slots are recycled through a free
+	// list and scope objects (with their backing value buffers) through a
+	// pool instead of the persistent-provider map above.
+	rootSlots     []rootProvider
+	freeRootSlots []int
+	scopePool     []*rootScope
+	scopeSeq      int64
+
 	// Direct pointers: handle payload is the memory pool index.
 
 	// String pool
@@ -115,14 +125,82 @@ func (v *vm) removeRootProvider(id int) {
 	}
 }
 
-func (v *vm) addTemporaryRoot(values ...value) func() {
-	id := v.addRootProvider(func(mark func(value)) {
-		for _, val := range values {
-			mark(val)
+// rootScope is a batched temporary GC root: one registered provider whose
+// marked set grows via Add and shrinks via Trim. Scopes and their backing
+// buffers are pooled per VM, so hot conversion loops (map/array/struct
+// boxing) root pending values without heap allocation. Releases must happen
+// in LIFO order relative to other scopes.
+type rootScope struct {
+	vm     *vm
+	slot   int
+	id     int64
+	values []value
+	mark   func(visit func(value))
+}
+
+// beginRootScope acquires a pooled scope and registers it as a root provider.
+func (v *vm) beginRootScope() *rootScope {
+	var s *rootScope
+	if n := len(v.scopePool); n > 0 {
+		s = v.scopePool[n-1]
+		v.scopePool = v.scopePool[:n-1]
+	} else {
+		s = &rootScope{vm: v}
+		scoped := s
+		s.mark = func(visit func(value)) {
+			for i := len(scoped.values) - 1; i >= 0; i-- {
+				visit(scoped.values[i])
+			}
 		}
-	})
+	}
+	if n := len(v.freeRootSlots); n > 0 {
+		s.slot = v.freeRootSlots[n-1]
+		v.freeRootSlots = v.freeRootSlots[:n-1]
+	} else {
+		s.slot = len(v.rootSlots)
+		v.rootSlots = append(v.rootSlots, nil)
+	}
+	v.rootSlots[s.slot] = s.mark
+	v.scopeSeq++
+	s.id = v.scopeSeq
+	s.values = s.values[:0]
+	return s
+}
+
+func (s *rootScope) add(vals ...value) {
+	s.values = append(s.values, vals...)
+}
+
+// trim drops the last n values from the marked set. Callers may only trim
+// values they know are now reachable through another rooted object.
+func (s *rootScope) trim(n int) {
+	if len(s.values) >= n {
+		s.values = s.values[:len(s.values)-n]
+	}
+}
+
+// end unregisters the scope and returns it (with its buffer) to the pool.
+// A second end on the same acquisition is a no-op.
+func (s *rootScope) end() {
+	if s == nil || s.id == 0 {
+		return
+	}
+	s.vm.rootSlots[s.slot] = nil
+	s.vm.freeRootSlots = append(s.vm.freeRootSlots, s.slot)
+	s.values = s.values[:0]
+	s.id = 0
+	s.vm.scopePool = append(s.vm.scopePool, s)
+}
+
+func (v *vm) addTemporaryRoot(values ...value) func() {
+	s := v.beginRootScope()
+	s.add(values...)
+	id := s.id
 	return func() {
-		v.removeRootProvider(id)
+		// Guard against a stale release after the scope was recycled.
+		if s.id == id {
+			s.end()
+		}
 	}
 }
 

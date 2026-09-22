@@ -73,7 +73,9 @@ func TestValueCodec_ExtensionType_EveryPath(t *testing.T) {
 	eval.vm_.StructReg().RegisterStruct("codecProofHolder", []vm.FieldDef{
 		vm.NewFieldDef("M", vm.TypeInvalid, 1),
 	})
-	hv, err := goStructToVMStruct(nil, eval.vm_, reflect.ValueOf(codecProofHolder{M: codecProofScalar(5)}), "test/holder")
+	c := acquireConvCtx(nil, eval.vm_, "test/holder")
+	hv, err := c.goStruct(reflect.ValueOf(codecProofHolder{M: codecProofScalar(5)}))
+	releaseConvCtx(c)
 	if err != nil {
 		t.Fatalf("struct field encode: %v", err)
 	}

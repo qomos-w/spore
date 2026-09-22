@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qomos-w/spore/diagnostics"
@@ -87,6 +88,79 @@ func vmArgPath(i int) string {
 	return "vm/evaluator/argument/" + strconv.Itoa(i)
 }
 
+// --- Lazy diagnostic paths ---
+//
+// Container conversion recurses per element/field/key. Building the joined
+// "path/key" string up front costs one allocation per element even on the
+// success path, which dominates host->VM boxing for perception-style
+// snapshots. Recursion instead pushes the pending segment onto a pooled
+// conversion context; the joined string is materialized only at error sites.
+type pathSegKind uint8
+
+const (
+	pathSegBase pathSegKind = iota
+	pathSegKey
+	pathSegIndex
+)
+
+type pathSeg struct {
+	kind  pathSegKind
+	key   string // pathSegBase: base path; pathSegKey: map key / field name
+	index int
+}
+
+func segKey(key string) pathSeg { return pathSeg{kind: pathSegKey, key: key} }
+func segIndex(i int) pathSeg    { return pathSeg{kind: pathSegIndex, index: i} }
+func segBase(p string) pathSeg  { return pathSeg{kind: pathSegBase, key: p} }
+
+// convCtx carries the state of one host->VM conversion: the host resolver,
+// the target VM and the stack of pending diagnostic path segments. Contexts
+// are pooled, so steady-state conversion (any depth) allocates nothing on
+// the Go side.
+type convCtx struct {
+	host HostInterfaceResolver
+	vm_  *vm.VM
+	segs []pathSeg // segs[0] is the base path
+}
+
+var convCtxPool = sync.Pool{New: func() any { return new(convCtx) }}
+
+func acquireConvCtx(host HostInterfaceResolver, vm_ *vm.VM, path string) *convCtx {
+	c := convCtxPool.Get().(*convCtx)
+	c.host = host
+	c.vm_ = vm_
+	c.segs = append(c.segs[:0], segBase(path))
+	return c
+}
+
+func releaseConvCtx(c *convCtx) {
+	c.host = nil
+	c.vm_ = nil
+	convCtxPool.Put(c)
+}
+
+func (c *convCtx) push(seg pathSeg) { c.segs = append(c.segs, seg) }
+func (c *convCtx) pop()             { c.segs = c.segs[:len(c.segs)-1] }
+
+// path joins the pending segment stack into the same "a/b/c" form the codec
+// historically built eagerly. Error paths only.
+func (c *convCtx) path() string {
+	var b strings.Builder
+	for _, seg := range c.segs {
+		switch seg.kind {
+		case pathSegBase:
+			b.WriteString(seg.key)
+		case pathSegKey:
+			b.WriteByte('/')
+			b.WriteString(seg.key)
+		case pathSegIndex:
+			b.WriteByte('/')
+			b.WriteString(strconv.Itoa(seg.index))
+		}
+	}
+	return b.String()
+}
+
 func toVMArgs(host HostInterfaceResolver, vm_ *vm.VM, args []any) ([]vm.Value, error) {
 	vmArgs := make([]vm.Value, len(args))
 	for i, arg := range args {
@@ -112,6 +186,14 @@ func anyToVMValue(vm_ *vm.VM, v any) (vm.Value, error) {
 }
 
 func anyToVMValueAtPath(host HostInterfaceResolver, vm_ *vm.VM, v any, path string) (vm.Value, error) {
+	c := acquireConvCtx(host, vm_, path)
+	val, err := c.convert(v)
+	releaseConvCtx(c)
+	return val, err
+}
+
+func (c *convCtx) convert(v any) (vm.Value, error) {
+	host, vm_ := c.host, c.vm_
 	if host != nil {
 		if handle, ok := host.HostInterfaceHandleForValue(v); ok {
 			return vm.EncodeHandle(handle), nil
@@ -123,7 +205,7 @@ func anyToVMValueAtPath(host HostInterfaceResolver, vm_ *vm.VM, v any, path stri
 			return vm.EncodeInt(0), &RuntimeError{
 				Code:     "value_out_of_range",
 				Category: diagnostics.CategoryRuntime,
-				Path:     path,
+				Path:     c.path(),
 				Message:  fmt.Sprintf("Go int value %d exceeds script int32 range", val),
 			}
 		}
@@ -147,11 +229,11 @@ func anyToVMValueAtPath(host HostInterfaceResolver, vm_ *vm.VM, v any, path stri
 	case []byte:
 		return vm_.EncodeBytes(val), nil
 	case []any:
-		return sliceToVMArray(host, vm_, reflect.ValueOf(val), path)
+		return c.anySlice(val)
 	case []map[string]any:
-		return sliceToVMArray(host, vm_, reflect.ValueOf(val), path)
+		return c.anySlice(val)
 	case map[string]any:
-		return stringMapToVMMap(host, vm_, reflect.ValueOf(val), path)
+		return c.anyMap(val)
 	case nil:
 		return vm.EncodeHandle(vm.InvalidHandle), nil
 	default:
@@ -160,106 +242,228 @@ func anyToVMValueAtPath(host HostInterfaceResolver, vm_ *vm.VM, v any, path stri
 		// interface implementation covers arguments, struct fields, native
 		// results and native values at once.
 		if enc, ok := v.(HostValueEncoder); ok {
-			return enc.EncodeToVM(vm_, path)
+			return enc.EncodeToVM(vm_, c.path())
 		}
 		rv := reflect.ValueOf(v)
 		if rv.IsValid() {
-			switch rv.Kind() {
-			case reflect.Slice, reflect.Array:
-				return sliceToVMArray(host, vm_, rv, path)
-			case reflect.Map:
-				if rv.Type().Key().Kind() == reflect.String {
-					return stringMapToVMMap(host, vm_, rv, path)
-				}
-			case reflect.Struct:
-				return goStructToVMStruct(host, vm_, rv, path)
-			}
+			return c.convertReflect(rv)
 		}
-		return unsupportedVMArgument(v, path)
+		return unsupportedVMArgument(v, c.path())
 	}
 }
 
-func sliceToVMArray(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
-	arr := vm_.NewArray(vm.TypeInvalid, 0)
-	releaseArrRoot := vm_.AddTemporaryRoot(vm.EncodeHandle(arr))
-	defer releaseArrRoot()
-	for i := 0; i < rv.Len(); i++ {
-		elemVal, err := anyToVMValueAtPath(host, vm_, rv.Index(i).Interface(), path+"/"+strconv.Itoa(i))
+var (
+	byteSliceType = reflect.TypeOf([]byte(nil))
+	timeType      = reflect.TypeOf(time.Time{})
+)
+
+// reflectValueToVM converts a reflect.Value without boxing it through
+// interface{} first: every .Interface() call on a non-pointer-shaped value
+// allocates (reflect packEface -> unsafe_New), so typed containers
+// (map[string]float64, []int, struct fields, ...) dispatch on Kind and read
+// through the typed accessors instead. Behavior mirrors convertAnyToVM's
+// type switch value-for-value, including which kinds are unsupported.
+func (c *convCtx) convertReflect(rv reflect.Value) (vm.Value, error) {
+	vm_ := c.vm_
+	// Composite kinds may implement the extension seam; probe them the same
+	// way the any-based path does (only reached when primitive cases miss).
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct, reflect.Pointer:
+		if enc, ok := rv.Interface().(HostValueEncoder); ok {
+			return enc.EncodeToVM(vm_, c.path())
+		}
+	}
+	switch rv.Kind() {
+	case reflect.Bool:
+		return vm.EncodeBool(rv.Bool()), nil
+	case reflect.Int:
+		val := rv.Int()
+		if val < -2147483648 || val > 2147483647 {
+			return vm.EncodeInt(0), &RuntimeError{
+				Code:     "value_out_of_range",
+				Category: diagnostics.CategoryRuntime,
+				Path:     c.path(),
+				Message:  fmt.Sprintf("Go int value %d exceeds script int32 range", val),
+			}
+		}
+		return vm.EncodeInt(int32(val)), nil
+	case reflect.Int8, reflect.Int16, reflect.Int32:
+		return vm.EncodeInt(int32(rv.Int())), nil
+	case reflect.Int64:
+		return vm.EncodeLong(rv.Int(), vm_), nil
+	case reflect.Uint64:
+		return vm.EncodeULong(rv.Uint(), vm_), nil
+	case reflect.Float32:
+		return vm.EncodeFloat(float32(rv.Float())), nil
+	case reflect.Float64:
+		return vm.EncodeDouble(rv.Float(), vm_), nil
+	case reflect.String:
+		return vm_.EncodeString(rv.String()), nil
+	case reflect.Interface:
+		if rv.IsNil() {
+			return vm.EncodeHandle(vm.InvalidHandle), nil
+		}
+		return c.convertReflect(rv.Elem())
+	case reflect.Slice:
+		if rv.Type() == byteSliceType {
+			return vm_.EncodeBytes(rv.Bytes()), nil
+		}
+		return c.reflectSlice(rv)
+	case reflect.Array:
+		return c.reflectSlice(rv)
+	case reflect.Map:
+		if rv.Type().Key().Kind() == reflect.String {
+			return c.stringMap(rv)
+		}
+	case reflect.Struct:
+		if rv.Type() == timeType {
+			return vm_.EncodeString(rv.Interface().(time.Time).Format(time.RFC3339Nano)), nil
+		}
+		return c.goStruct(rv)
+	}
+	return unsupportedVMArgument(rv.Interface(), c.path())
+}
+
+// anySlice converts the untyped host slice shapes ([]any and
+// []map[string]any) with direct iteration — no reflect scaffolding, no
+// per-element boxing. The VM array is preallocated to the exact length.
+func (c *convCtx) anySlice[T any](s []T) (vm.Value, error) {
+	vm_ := c.vm_
+	arr := vm_.NewArray(vm.TypeInvalid, len(s))
+	scope := vm_.BeginRootScope()
+	defer scope.End()
+	scope.Add(vm.EncodeHandle(arr))
+	for i, elem := range s {
+		c.push(segIndex(i))
+		elemVal, err := c.convert(elem)
+		c.pop()
 		if err != nil {
 			return vm.EncodeInt(0), err
 		}
-		releaseElemRoot := vm_.AddTemporaryRoot(elemVal)
-		vm_.ArrayPush(arr, elemVal)
-		releaseElemRoot()
+		scope.Add(elemVal)
+		vm_.SetArrayElement(arr, i, elemVal)
+		scope.Trim(1)
 	}
 	return vm.EncodeHandle(arr), nil
 }
 
-func stringMapToVMMap(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
-	m := vm_.NewMap(vm.TypeInvalid, vm.TypeInvalid, rv.Len())
-	// Root the outer map: converting nested values allocates, and an
-	// unrooted map gets swept once the heap crosses its GC threshold —
-	// the reused memory then corrupts the next MapSet ("map is full").
-	releaseRoot := vm_.AddTemporaryRoot(vm.EncodeHandle(m))
-	defer releaseRoot()
-	iter := rv.MapRange()
-	for iter.Next() {
-		keyString := iter.Key().String()
-		elemVal, err := anyToVMValueAtPath(host, vm_, iter.Value().Interface(), path+"/"+keyString)
+func (c *convCtx) reflectSlice(rv reflect.Value) (vm.Value, error) {
+	vm_ := c.vm_
+	arr := vm_.NewArray(vm.TypeInvalid, rv.Len())
+	scope := vm_.BeginRootScope()
+	defer scope.End()
+	scope.Add(vm.EncodeHandle(arr))
+	for i := 0; i < rv.Len(); i++ {
+		c.push(segIndex(i))
+		elemVal, err := c.convertReflect(rv.Index(i))
+		c.pop()
 		if err != nil {
 			return vm.EncodeInt(0), err
 		}
+		scope.Add(elemVal)
+		vm_.SetArrayElement(arr, i, elemVal)
+		scope.Trim(1)
+	}
+	return vm.EncodeHandle(arr), nil
+}
+
+// anyMap converts the dominant host map shape (map[string]any, the
+// JSON-style snapshot type) with direct Go map iteration: no reflect.Value
+// scaffolding, no boxed key/value copies, no per-entry path strings.
+func (c *convCtx) anyMap(m map[string]any) (vm.Value, error) {
+	vm_ := c.vm_
+	vmMap := vm_.NewMap(vm.TypeInvalid, vm.TypeInvalid, len(m))
+	// Root the outer map: converting nested values allocates, and an
+	// unrooted map gets swept once the heap crosses its GC threshold —
+	// the reused memory then corrupts the next MapSet ("map is full").
+	scope := vm_.BeginRootScope()
+	defer scope.End()
+	scope.Add(vm.EncodeHandle(vmMap))
+	for keyString, val := range m {
+		c.push(segKey(keyString))
+		elemVal, err := c.convert(val)
+		c.pop()
+		if err != nil {
+			return vm.EncodeInt(0), err
+		}
+		// Root the pending value before EncodeString: interning may allocate
+		// VM memory and trigger a GC that would otherwise sweep the unstored
+		// handle. Once MapSet stores the pair they are reachable through the
+		// rooted map, so the batched roots can be trimmed again.
+		scope.Add(elemVal)
 		encodedKey := vm_.EncodeString(keyString)
-		// EncodeString may allocate a heap string; root the pending pair so a
-		// GC triggered by that allocation cannot sweep the unstored elemVal.
-		releaseElemRoot := vm_.AddTemporaryRoot(elemVal, encodedKey)
+		scope.Add(encodedKey)
+		vm_.MapSet(vmMap, encodedKey, elemVal)
+		scope.Trim(2)
+	}
+	return vm.EncodeHandle(vmMap), nil
+}
+
+func (c *convCtx) stringMap(rv reflect.Value) (vm.Value, error) {
+	vm_ := c.vm_
+	m := vm_.NewMap(vm.TypeInvalid, vm.TypeInvalid, rv.Len())
+	scope := vm_.BeginRootScope()
+	defer scope.End()
+	scope.Add(vm.EncodeHandle(m))
+	iter := rv.MapRange()
+	for iter.Next() {
+		keyString := iter.Key().String()
+		c.push(segKey(keyString))
+		elemVal, err := c.convertReflect(iter.Value())
+		c.pop()
+		if err != nil {
+			return vm.EncodeInt(0), err
+		}
+		scope.Add(elemVal)
+		encodedKey := vm_.EncodeString(keyString)
+		scope.Add(encodedKey)
 		vm_.MapSet(m, encodedKey, elemVal)
-		releaseElemRoot()
+		scope.Trim(2)
 	}
 	return vm.EncodeHandle(m), nil
 }
 
-func goStructToVMStruct(host HostInterfaceResolver, vm_ *vm.VM, rv reflect.Value, path string) (vm.Value, error) {
+func (c *convCtx) goStruct(rv reflect.Value) (vm.Value, error) {
+	vm_ := c.vm_
 	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	if rv.Kind() != reflect.Struct {
-		return unsupportedVMArgument(rv.Interface(), path)
+		return unsupportedVMArgument(rv.Interface(), c.path())
 	}
 	structName := rv.Type().Name()
 	sd := vm_.StructReg().GetStruct(structName)
 	if sd == nil {
-		return unsupportedVMArgument(rv.Interface(), path+"/struct-not-registered:"+structName)
+		return unsupportedVMArgument(rv.Interface(), c.path()+"/struct-not-registered:"+structName)
 	}
 	fields := sd.Fields()
 	fieldValues := make([]vm.Value, len(fields))
-	// Root each converted field as it is produced: later field conversions
-	// allocate, and unrooted handles (nested maps/arrays/structs) would be
-	// swept by a mid-conversion GC pass before NewStructInstance stores them.
-	var releases []func()
-	defer func() {
-		for i := len(releases) - 1; i >= 0; i-- {
-			releases[i]()
-		}
-	}()
+	// Root each converted field in one batched scope: later field
+	// conversions allocate, and unrooted handles (nested maps/arrays/structs)
+	// would be swept by a mid-conversion GC pass before NewStructInstance
+	// stores them.
+	scope := vm_.BeginRootScope()
+	defer scope.End()
 	for i, f := range fields {
 		fieldRv := rv.FieldByName(f.Name())
 		if !fieldRv.IsValid() {
 			fieldRv = findFieldByJSONTag(rv, f.Name())
 		}
 		if !fieldRv.IsValid() {
-			return unsupportedVMArgument(rv.Interface(), fmt.Sprintf("%s/field-%s-not-found", path, f.Name()))
+			return unsupportedVMArgument(rv.Interface(), fmt.Sprintf("%s/field-%s-not-found", c.path(), f.Name()))
 		}
-		val, err := anyToVMValueAtPath(host, vm_, fieldRv.Interface(), path+"/"+f.Name())
+		c.push(segKey(f.Name()))
+		val, err := c.convertReflect(fieldRv)
+		c.pop()
 		if err != nil {
 			return vm.EncodeInt(0), err
 		}
 		fieldValues[i] = val
-		releases = append(releases, vm_.AddTemporaryRoot(val))
+		scope.Add(val)
 	}
 	handle := vm_.NewStructInstance(structName, fieldValues)
 	if handle == vm.InvalidHandle {
-		return unsupportedVMArgument(rv.Interface(), path+"/new-struct-failed")
+		return unsupportedVMArgument(rv.Interface(), c.path()+"/new-struct-failed")
 	}
 	return vm.EncodeHandle(handle), nil
 }

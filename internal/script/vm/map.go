@@ -50,9 +50,8 @@ func (v *vm) newMap(keyType, valType typeID, initialCapacity int) handle {
 		capacity = mapMinCapacity
 	}
 	nodes := v.newMapNodes(capacity)
-	nodesRootID := v.addRootProvider(func(mark func(value)) {
-		mark(encodeHandle(nodes))
-	})
+	scope := v.beginRootScope()
+	scope.add(encodeHandle(nodes))
 	idx := v.allocMemory(mapHeaderSize)
 	v.memory[idx+0] = encodeMapHeader(keyType, valType)
 	v.memory[idx+1] = uint64(capacity)
@@ -60,7 +59,7 @@ func (v *vm) newMap(keyType, valType typeID, initialCapacity int) handle {
 	v.memory[idx+3] = mapNullPtr
 	v.memory[idx+4] = mapNullPtr
 	v.memory[idx+5] = uint64(encodeHandle(nodes))
-	v.removeRootProvider(nodesRootID)
+	scope.end()
 	return v.createHandle(idx)
 }
 
@@ -118,9 +117,10 @@ func (v *vm) mapSet(m handle, key, val value) {
 	size := int(v.memory[mapIdx+2])
 
 	if size*mapLoadFactorDen >= capacity*mapLoadFactorNum {
-		releaseRoots := v.addTemporaryRoot(encodeHandle(m), key, val)
+		scope := v.beginRootScope()
+		scope.add(encodeHandle(m), key, val)
 		v.mapGrow(m)
-		releaseRoots()
+		scope.end()
 		mapIdx = v.getMemoryIndex(m)
 		capacity = int(v.memory[mapIdx+1])
 		size = int(v.memory[mapIdx+2])
@@ -220,11 +220,11 @@ func (v *vm) mapSize(m handle) int {
 }
 
 func (v *vm) mapGrow(m handle) {
-	// Use explicit root management instead of defer+closure to avoid heap
-	// allocations on every grow.
-	mapRootID := v.addRootProvider(func(mark func(value)) {
-		mark(encodeHandle(m))
-	})
+	// One batched root scope covers the map, its old nodes (still referenced
+	// by the header until the swap) and the freshly allocated nodes.
+	scope := v.beginRootScope()
+	defer scope.end()
+	scope.add(encodeHandle(m))
 
 	mapIdx := v.getMemoryIndex(m)
 	header := v.memory[mapIdx]
@@ -235,9 +235,7 @@ func (v *vm) mapGrow(m handle) {
 	oldHead := v.memory[mapIdx+3]
 
 	newNodes := v.newMapNodes(oldCapacity * 2)
-	newNodesRootID := v.addRootProvider(func(mark func(value)) {
-		mark(encodeHandle(newNodes))
-	})
+	scope.add(encodeHandle(newNodes))
 	newNodesIdx := v.getMemoryIndex(newNodes)
 	newCapacity := getMapNodesCapacity(v.memory[newNodesIdx])
 
@@ -254,9 +252,6 @@ func (v *vm) mapGrow(m handle) {
 		v.mapSet(m, key, val)
 		current = v.memory[nodesIdx+int(current)+3]
 	}
-
-	v.removeRootProvider(newNodesRootID)
-	v.removeRootProvider(mapRootID)
 
 	_ = keyType
 	_ = valType

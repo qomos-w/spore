@@ -509,6 +509,28 @@ func (v *VM) ArrayLength(arr Handle) int { return v.getArrayLength(arr) }
 // AddTemporaryRoot keeps values live until the returned release function is called.
 func (v *VM) AddTemporaryRoot(values ...Value) func() { return v.addTemporaryRoot(values...) }
 
+// GCCollections reports how many times the VM garbage collector has run.
+func (v *VM) GCCollections() int64 { return v.gc.collections }
+
+// RootScope is a batched temporary GC root: one registration whose marked set
+// grows via Add and shrinks via Trim. Pooled per VM; steady-state use does
+// not allocate.
+type RootScope = rootScope
+
+// BeginRootScope acquires a pooled root scope and registers it with the GC.
+// End must be called (LIFO relative to other scopes) when the guarded
+// conversions complete.
+func (v *VM) BeginRootScope() *rootScope { return v.beginRootScope() }
+
+// Add roots the given values until Trim/End removes them.
+func (s *rootScope) Add(values ...Value) { s.add(values...) }
+
+// Trim drops the last n rooted values.
+func (s *rootScope) Trim(n int) { s.trim(n) }
+
+// End unregisters the scope and recycles it.
+func (s *rootScope) End() { s.end() }
+
 // NewMap creates a new map.
 func (v *VM) NewMap(keyType, valType TypeID, initialCapacity int) Handle {
 	return v.newMap(keyType, valType, initialCapacity)
