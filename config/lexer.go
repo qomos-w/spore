@@ -45,6 +45,13 @@ func (l *lexer) nextToken() token {
 			return l.nextToken()
 		}
 		return l.errorToken("unexpected '/'")
+	case ch == '-':
+		// The config DSL has no arithmetic, so '-' is unambiguous as a
+		// number sign. It is only consumed when a digit follows.
+		if !l.atEnd() && isDigit(l.peek()) {
+			return l.number()
+		}
+		return l.errorToken("unexpected '-' (only valid as the sign of a number literal)")
 	case ch == ':':
 		return l.makeToken(tokColon)
 	case ch == ',':

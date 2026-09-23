@@ -301,3 +301,46 @@ func findEntry(entries []KeyValue, key string) (Value, bool) {
 	}
 	return Value{}, false
 }
+
+func TestParse_NegativeNumbers(t *testing.T) {
+	cfg, err := Parse(`
+neg_int: -42
+neg_float: -3.14
+int64_min: -9223372036854775808
+neg_in_array: [1, -2.5]
+`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	assertValue(t, cfg, "neg_int", ValueInt, func(v Value) {
+		if v.IntVal != -42 {
+			t.Errorf("expected -42, got %d", v.IntVal)
+		}
+	})
+	assertValue(t, cfg, "neg_float", ValueFloat, func(v Value) {
+		if v.FloatVal != -3.14 {
+			t.Errorf("expected -3.14, got %v", v.FloatVal)
+		}
+	})
+	assertValue(t, cfg, "int64_min", ValueInt, func(v Value) {
+		if v.IntVal != -9223372036854775808 {
+			t.Errorf("expected int64 min, got %d", v.IntVal)
+		}
+	})
+	v, ok := cfg.Get("neg_in_array")
+	if !ok || len(v.Elements) != 2 || v.Elements[1].FloatVal != -2.5 {
+		t.Errorf("expected [1, -2.5], got %+v", v)
+	}
+}
+
+func TestParse_NegativeNumberErrors(t *testing.T) {
+	if _, err := Parse("x: -"); err == nil {
+		t.Error("lone '-' must be a parse error")
+	}
+	if _, err := Parse("x: -a"); err == nil {
+		t.Error("'-' not followed by a digit must be a parse error")
+	}
+	if _, err := Parse("x: -9223372036854775809"); err == nil {
+		t.Error("literal below int64 min must be a parse error")
+	}
+}
