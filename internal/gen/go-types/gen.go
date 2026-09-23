@@ -108,6 +108,25 @@ type Options struct {
 	// Component ⇒ schema: a component struct must carry a schema ID; Render
 	// and RenderRegistry enforce this.
 	EmitComponents bool
+
+	// EnumImports maps enum types that live in another Go package into this
+	// render. Per the enum single-emission rule enums are emitted once and
+	// consuming packages import them; a run whose structs reference such
+	// enums lists them here so field types render qualified (e.g.
+	// `world.Biome` instead of the bare `Biome`) and Render emits the
+	// corresponding import for every qualifier actually used. The package
+	// qualifier is the last path segment of ImportPath.
+	EnumImports []EnumImport
+}
+
+// EnumImport is one external enum package referenced by the rendered structs.
+type EnumImport struct {
+	// ImportPath is the Go import path of the package that declares and
+	// emits the enums (e.g. "github.com/x/barcraft/src/code/model/world").
+	ImportPath string
+
+	// Enums lists the enum type names declared in that package.
+	Enums []string
 }
 
 // Render produces a gofmt-clean Go source file declaring one struct per
@@ -142,6 +161,8 @@ func Render(objs []schema.ObjectDesc, opts Options) ([]byte, error) {
 	hasIDs := hasSchemaIDs(sorted)
 	hasComponents := opts.EmitComponents && hasComponentStructs(sorted)
 	usesMedia := usesMediaType(sorted)
+	quals := opts.enumQualifiers()
+	extImports := usedExternalEnumImports(sorted, opts)
 
 	if hasComponents {
 		// Component ⇒ schema: an @component struct must carry a schema ID so it
@@ -151,20 +172,34 @@ func Render(objs []schema.ObjectDesc, opts Options) ([]byte, error) {
 		}
 	}
 
+	// One import block: stdlib group, then spore + external enum packages.
+	// External enum packages qualify field types whose enums are emitted in
+	// another package (enum single-emission rule).
+	var stdlib, named []string
 	if hasIDs && !opts.NoRegistryInit {
-		if hasComponents {
-			buf.WriteString("import (\n\t\"reflect\"\n\n\t\"github.com/qomos-w/spore/runtime\"\n\t\"github.com/qomos-w/spore/schema\"\n)\n\n")
-		} else {
-			buf.WriteString("import (\n\t\"reflect\"\n\n\t\"github.com/qomos-w/spore/schema\"\n)\n\n")
+		stdlib = append(stdlib, `"reflect"`)
+	}
+	if hasComponents {
+		named = append(named, `"github.com/qomos-w/spore/runtime"`)
+	}
+	if (hasIDs && !opts.NoRegistryInit) || usesMedia {
+		named = append(named, `"github.com/qomos-w/spore/schema"`)
+	}
+	for _, p := range extImports {
+		named = append(named, strconv.Quote(p))
+	}
+	if len(stdlib)+len(named) > 0 {
+		buf.WriteString("import (\n")
+		for _, s := range stdlib {
+			fmt.Fprintf(&buf, "\t%s\n", s)
 		}
-	} else if hasComponents {
-		if usesMedia {
-			buf.WriteString("import (\n\t\"github.com/qomos-w/spore/runtime\"\n\n\t\"github.com/qomos-w/spore/schema\"\n)\n\n")
-		} else {
-			buf.WriteString("import \"github.com/qomos-w/spore/runtime\"\n\n")
+		if len(stdlib) > 0 && len(named) > 0 {
+			buf.WriteString("\n")
 		}
-	} else if usesMedia {
-		buf.WriteString("import \"github.com/qomos-w/spore/schema\"\n\n")
+		for _, s := range named {
+			fmt.Fprintf(&buf, "\t%s\n", s)
+		}
+		buf.WriteString(")\n\n")
 	}
 
 	writeSchemaIDConstants(&buf, sorted)
@@ -191,7 +226,7 @@ func Render(objs []schema.ObjectDesc, opts Options) ([]byte, error) {
 			buf.WriteString("\n")
 		}
 		first = false
-		if err := writeStruct(&buf, obj, opts.StructNames, exportNameOptions{noInitialisms: opts.NoInitialisms}); err != nil {
+		if err := writeStruct(&buf, obj, opts.StructNames, quals, exportNameOptions{noInitialisms: opts.NoInitialisms}); err != nil {
 			return nil, fmt.Errorf("struct %q: %w", obj.Name, err)
 		}
 	}
@@ -325,7 +360,8 @@ func validateComponentSchemaIDs(objs []schema.ObjectDesc) error {
 // AssignSequentialSchemaIDs fills in SchemaID for structs that do not have an
 // explicit @schema(N) annotation. The filename base is extracted from
 // sourcePath (e.g. "agent.chat._300.spore" -> 300); structs receive base+offset
-// in declaration order. Explicit IDs are left untouched.
+// in declaration order. Explicit IDs are left untouched. @data structs are
+// never assigned an ID: data tables are not transport schemas.
 func AssignSequentialSchemaIDs(objs []schema.ObjectDesc, sourcePath string) {
 	baseID, ok := parseSchemaBaseID(sourcePath)
 	if !ok {
@@ -334,7 +370,7 @@ func AssignSequentialSchemaIDs(objs []schema.ObjectDesc, sourcePath string) {
 	var offset uint64
 	for i := range objs {
 		obj := &objs[i]
-		if obj.Kind != schema.TypeKindStruct {
+		if obj.Kind != schema.TypeKindStruct || obj.IsData {
 			continue
 		}
 		if obj.SchemaID != 0 {
@@ -451,7 +487,7 @@ func RenderRegistry(entries []RegistryEntry, opts Options) ([]byte, error) {
 func writeSchemaIDInit(buf *bytes.Buffer, objs []schema.ObjectDesc) {
 	var ids []schema.ObjectDesc
 	for _, obj := range objs {
-		if obj.Kind == schema.TypeKindStruct && obj.SchemaID != 0 {
+		if obj.Kind == schema.TypeKindStruct && !obj.IsData && obj.SchemaID != 0 {
 			ids = append(ids, obj)
 		}
 	}
@@ -539,7 +575,7 @@ func writeRegistryObject(buf *bytes.Buffer, compIDs []RegistryEntry) {
 func writeSchemaIDConstants(buf *bytes.Buffer, objs []schema.ObjectDesc) {
 	var ids []schema.ObjectDesc
 	for _, obj := range objs {
-		if obj.Kind == schema.TypeKindStruct && obj.SchemaID != 0 {
+		if obj.Kind == schema.TypeKindStruct && !obj.IsData && obj.SchemaID != 0 {
 			ids = append(ids, obj)
 		}
 	}
@@ -555,10 +591,10 @@ func writeSchemaIDConstants(buf *bytes.Buffer, objs []schema.ObjectDesc) {
 	buf.WriteString(")\n\n")
 }
 
-func writeStruct(buf *bytes.Buffer, obj schema.ObjectDesc, structNames map[string]bool, exportOpts exportNameOptions) error {
+func writeStruct(buf *bytes.Buffer, obj schema.ObjectDesc, structNames map[string]bool, quals map[string]string, exportOpts exportNameOptions) error {
 	fmt.Fprintf(buf, "type %s struct {\n", obj.Name)
 	for _, f := range obj.Fields {
-		goType, err := mapType(f.Type)
+		goType, err := mapTypeQual(f.Type, quals)
 		if err != nil {
 			return fmt.Errorf("field %q: %w", f.Name, err)
 		}
@@ -588,6 +624,13 @@ func writeStruct(buf *bytes.Buffer, obj schema.ObjectDesc, structNames map[strin
 }
 
 func mapType(td schema.TypeDesc) (string, error) {
+	return mapTypeQual(td, nil)
+}
+
+// mapTypeQual is mapType with external-enum qualification: named leaves
+// (struct, class, enum) whose name maps to a qualifier in quals render as
+// `<qualifier>.<Name>`. quals is nil for unqualified renders.
+func mapTypeQual(td schema.TypeDesc, quals map[string]string) (string, error) {
 	switch td.Kind {
 	case schema.TypeKindScalar:
 		return mapScalar(td.Name)
@@ -597,7 +640,7 @@ func mapType(td schema.TypeDesc) (string, error) {
 		if td.Element == nil {
 			return "", fmt.Errorf("array element missing")
 		}
-		inner, err := mapType(*td.Element)
+		inner, err := mapTypeQual(*td.Element, quals)
 		if err != nil {
 			return "", err
 		}
@@ -606,11 +649,11 @@ func mapType(td schema.TypeDesc) (string, error) {
 		if td.Key == nil || td.Value == nil {
 			return "", fmt.Errorf("map key/value missing")
 		}
-		k, err := mapType(*td.Key)
+		k, err := mapTypeQual(*td.Key, quals)
 		if err != nil {
 			return "", err
 		}
-		v, err := mapType(*td.Value)
+		v, err := mapTypeQual(*td.Value, quals)
 		if err != nil {
 			return "", err
 		}
@@ -623,14 +666,23 @@ func mapType(td schema.TypeDesc) (string, error) {
 		if name == "" {
 			return "", fmt.Errorf("named type missing name")
 		}
-		return name, nil
+		return qualifyName(name, quals), nil
 	case schema.TypeKindEnum:
 		if td.Name == "" {
 			return "", fmt.Errorf("enum type missing name")
 		}
-		return td.Name, nil
+		return qualifyName(td.Name, quals), nil
 	}
 	return "", fmt.Errorf("unsupported type kind %v", td.Kind)
+}
+
+// qualifyName prefixes name with its external package qualifier when the name
+// is an imported enum, else returns it unchanged.
+func qualifyName(name string, quals map[string]string) string {
+	if q := quals[name]; q != "" {
+		return q + "." + name
+	}
+	return name
 }
 
 // mapScalar maps a Spore scalar name to the Go type go-types emits for it,

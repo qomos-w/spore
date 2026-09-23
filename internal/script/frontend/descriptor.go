@@ -337,14 +337,28 @@ func extractClassDesc(stmt statement, ctx typeContext) schema.ObjectDesc {
 func classDescFromStruct(s *structStmt, ctx typeContext) schema.ObjectDesc {
 	fieldDescs := make([]schema.FieldDesc, 0, len(s.Fields))
 	for _, f := range s.Fields {
+		var ref *schema.FieldRef
+		if f.Ref != nil {
+			ref = &schema.FieldRef{Target: f.Ref.Target, Field: f.Ref.Field}
+		}
 		fieldDescs = append(fieldDescs, schema.FieldDesc{
 			Name:     f.Name.Value,
 			Type:     typeAnnotationToTypeDesc(f.Type_, ctx),
 			Private:  f.Access == accessPrivate,
 			Optional: f.Optional,
+			IsKey:    f.Key,
+			Ref:      ref,
 		})
 	}
-	return schema.ObjectDesc{Kind: schema.TypeKindStruct, Name: s.Name.Value, Fields: fieldDescs, SchemaID: s.SchemaID, IsComponent: s.IsComponent}
+	return schema.ObjectDesc{
+		Kind:        schema.TypeKindStruct,
+		Name:        s.Name.Value,
+		Fields:      fieldDescs,
+		SchemaID:    s.SchemaID,
+		IsComponent: s.IsComponent,
+		IsData:      s.IsData,
+		DataVersion: s.DataVersion,
+	}
 }
 
 func classDescFromClass(s *classStmt, ctx typeContext) schema.ObjectDesc {

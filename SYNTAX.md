@@ -32,7 +32,7 @@ array map int float string media
 return if else for while in when case break continue
 is as from this new true false null super constructor
 open override interface public private static
-stream yield async await optional try catch defer
+stream yield async await optional key try catch defer
 ```
 
 ## 2. Types
@@ -108,6 +108,44 @@ struct Event {
   optional in the descriptor (`FieldDesc.Optional`). It is schema metadata;
   it does **not** relax the literal-completeness rule. A field literally named
   `optional` (`optional: T`) still parses as a field name.
+
+### 2.3.1 `@data` — keyed data-table rows
+
+`@data` declares a struct whose instances are rows of a keyed data table
+(startup-loaded configuration), not ECS components. It is the third struct
+role alongside plain schema structs and `@component`:
+
+```spore
+@data
+@version(2)
+struct AnimalType {
+    key id: string
+    name: string
+    biome: BiomeKind
+    @ref(AnimalType) optional evolvesInto: string
+}
+```
+
+- `@data` — takes no arguments. The struct never receives a transport schema
+  id: it must not combine with `@schema(N)` or `@component` (both are errors).
+  Code generators emit it as a plain struct — no component descriptor, no
+  world registry entry — plus, when requested, a data-table manifest.
+- `@version(N)` — optional, `@data` structs only. A consumer-side format
+  version for forward-compat gating of loaded data (`ObjectDesc.DataVersion`,
+  0 = unversioned). Independent from transport schema ids.
+- `key` — field modifier (same reserved-word and `key: T` disambiguation
+  rules as `optional`) marking the table's key field. Exactly one per
+  `@data` struct; not optional; type must be `string`, an integer scalar
+  (`byte short ushort int uint long ulong`), or an enum. Marked `key`/`@ref`
+  fields inside a non-`@data` struct are an error.
+- `@ref(T)` / `@ref(T.field)` — field decorator declaring a foreign key into
+  the `@data` struct `T`; `@ref(T)` targets T's key field, `@ref(T.field)`
+  an explicit field of T. The field must be `string` or `array<string>`
+  (arrays reference every element) and T must be string-keyed. Composable
+  with `optional` (nullable reference); decorators precede modifiers
+  (`@ref(T) optional boss: string`). Inside one struct the rules are
+  enforced at codegen time; the parser itself only checks decorator
+  spelling and argument shape.
 
 ### 2.4 Class — object surface
 

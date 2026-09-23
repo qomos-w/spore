@@ -194,28 +194,66 @@ func (p *parser) parseStructStmt(exported bool) *structStmt {
 	}
 }
 
-// parseDecoratedStructStmt parses a decorator list (@schema(N), @component)
-// followed by a struct declaration. It is the entry point from the top-level
-// `@` dispatch; plain struct declarations go directly to parseStructStmt.
+// parseDecoratedStructStmt parses a decorator list (@schema(N), @component,
+// @data, @version(N)) followed by a struct declaration. It is the entry point
+// from the top-level `@` dispatch; plain struct declarations go directly to
+// parseStructStmt.
 func (p *parser) parseDecoratedStructStmt(exported bool) *structStmt {
 	tok := p.cur // the @ token
 
 	schemaID := uint64(0)
 	isComponent := false
+	isData := false
+	dataVersion := uint64(0)
+	hasVersion := false
 	for p.curIs(tokAt) {
 		p.nextToken() // consume @
 		ann := p.expectIdent()
 		switch ann {
 		case "schema":
-			schemaID = p.parseSchemaAnnotationArgs()
+			schemaID = p.parseUintAnnotationArgs("schema id")
 		case "component":
 			if isComponent {
 				p.addError("duplicate @component annotation")
 			}
 			isComponent = true
+		case "data":
+			if isData {
+				p.addError("duplicate @data annotation")
+			}
+			isData = true
+			if p.curIs(tokLParen) {
+				p.addError("@data takes no arguments")
+				// Resync past the argument list so the following struct
+				// declaration still parses and downstream errors stay useful.
+				for !p.curIs(tokRParen) && !p.curIs(tokEOF) && !p.curIs(tokError) {
+					p.nextToken()
+				}
+				if p.curIs(tokRParen) {
+					p.nextToken()
+				}
+			}
+		case "version":
+			if hasVersion {
+				p.addError("duplicate @version annotation")
+			}
+			hasVersion = true
+			dataVersion = p.parseUintAnnotationArgs("data version")
 		default:
-			p.addError(fmt.Sprintf("expected schema or component annotation, got @%s", ann))
+			p.addError(fmt.Sprintf("expected schema, component, data or version annotation, got @%s", ann))
 		}
+	}
+
+	// Decorators are order-independent; judge the role rules once the list is
+	// complete.
+	if isData && isComponent {
+		p.addError("@data and @component are mutually exclusive")
+	}
+	if isData && schemaID != 0 {
+		p.addError("@data structs must not carry @schema(N): data tables are not transport schemas")
+	}
+	if hasVersion && !isData {
+		p.addError("@version is only valid on a @data struct")
 	}
 
 	if !p.curIs(tokStruct) {
@@ -236,20 +274,42 @@ func (p *parser) parseDecoratedStructStmt(exported bool) *structStmt {
 		Exported:    exported,
 		SchemaID:    schemaID,
 		IsComponent: isComponent,
+		IsData:      isData,
+		DataVersion: dataVersion,
 	}
 }
 
-// parseSchemaAnnotationArgs parses `(N)` following the schema annotation name.
-func (p *parser) parseSchemaAnnotationArgs() uint64 {
+// parseUintAnnotationArgs parses `(N)` following an annotation name that takes
+// a single unsigned integer argument (e.g. @schema(300), @version(2)).
+func (p *parser) parseUintAnnotationArgs(what string) uint64 {
 	p.expect(tokLParen)
 	if !p.curIs(tokIntLit) {
-		p.addError(fmt.Sprintf("expected integer schema id, got %s", p.cur.lexeme))
+		p.addError(fmt.Sprintf("expected integer %s, got %s", what, p.cur.lexeme))
 		return 0
 	}
 	id := uint64(p.cur.intVal)
 	p.nextToken()
 	p.expect(tokRParen)
 	return id
+}
+
+// parseRefAnnotationArgs parses `(T)` or `(T.field)` following the `ref` field
+// annotation name. An empty Field means the reference targets the referenced
+// struct's key field.
+func (p *parser) parseRefAnnotationArgs() *fieldRef {
+	p.expect(tokLParen)
+	target := p.expectIdent()
+	if target == "" {
+		p.expect(tokRParen)
+		return nil
+	}
+	ref := &fieldRef{Target: target}
+	if p.curIs(tokDot) {
+		p.nextToken()
+		ref.Field = p.expectIdent()
+	}
+	p.expect(tokRParen)
+	return ref
 }
 
 // --- Enum ---

@@ -25,7 +25,7 @@ array map int float string media
 return if else for while in when case break continue
 is as from this new true false null super constructor
 open override interface public private static
-stream yield async await optional try catch defer
+stream yield async await optional key try catch defer
 ```
 
 ## 2. 类型
@@ -89,6 +89,26 @@ struct Event {
 - `@schema(N)` —— 声明传输层 schema id（单个整数字面量，仅用于 `struct` 声明）。进入 `ObjectDesc.SchemaID`。
 - `@component` —— 把 struct 标记为 ECS 组件（`ObjectDesc.IsComponent`）。组件必须携带 schema id；携带 schema id 的 struct 不自动成为组件。可与 `@schema(N)` 任意顺序组合。
 - `optional` —— `struct` 与 `class` 字段的修饰符，在描述符中标记字段可选（`FieldDesc.Optional`）。它是 schema 元数据，**不**放宽字面量完整性规则。字段名恰好叫 `optional`（`optional: T`）仍按字段名解析。
+
+### 2.3.1 `@data` —— 键控数据表行
+
+`@data` 声明一个其实例为键控数据表行（启动期加载的配置数据）的 struct，而非 ECS 组件。它是与普通 schema struct、`@component` 平行的第三种 struct 角色：
+
+```spore
+@data
+@version(2)
+struct AnimalType {
+    key id: string
+    name: string
+    biome: BiomeKind
+    @ref(AnimalType) optional evolvesInto: string
+}
+```
+
+- `@data` —— 无参数。该 struct 永远不携带传输 schema id：与 `@schema(N)` 或 `@component` 组合均为错误。代码生成器输出纯 struct——无组件描述符、不进 world registry——并按需附带数据表清单。
+- `@version(N)` —— 可选，仅 `@data` struct。面向消费方的格式版本号，用于加载数据的前向兼容门禁（`ObjectDesc.DataVersion`，0 = 未版本化）。与传输 schema id 无关。
+- `key` —— 字段修饰符（保留字与 `key: T` 消歧规则同 `optional`），标记表的键字段。每个 `@data` struct 恰好一个；不可为 optional；类型必须是 `string`、整数标量（`byte short ushort int uint long ulong`）或枚举。非 `@data` struct 中出现 `key`/`@ref` 标记为错误。
+- `@ref(T)` / `@ref(T.field)` —— 字段装饰器，声明指向 `@data` struct `T` 的外键；`@ref(T)` 指向 T 的键字段，`@ref(T.field)` 指向 T 的显式字段。字段必须是 `string` 或 `array<string>`（数组逐元素引用），且 T 必须为 string 键。可与 `optional` 组合（可空引用）；装饰器在修饰符之前（`@ref(T) optional boss: string`）。跨 struct 规则在代码生成期强制执行；解析器本身只检查装饰器拼写与参数形态。
 
 ### 2.4 class —— 对象语义面
 

@@ -154,6 +154,16 @@ func MustParseTypeDesc(source string) schema.TypeDesc {
 // ignored. This is the public-facing helper used by host code-gen tools that
 // take a .spore file as authoring source.
 func ParseAllObjectDescs(source string) ([]schema.ObjectDesc, error) {
+	return ParseAllObjectDescsWithEnums(source, nil)
+}
+
+// ParseAllObjectDescsWithEnums is ParseAllObjectDescs with external enum names
+// seeded into the type context. Codegen runs that emit a package referencing
+// enums declared elsewhere (the enum single-emission rule: enums are emitted
+// once and consuming packages import them) pass those names here so fields of
+// those types resolve to TypeKindEnum instead of the uppercase-ident fallback
+// (TypeKindClass).
+func ParseAllObjectDescsWithEnums(source string, externalEnumNames []string) ([]schema.ObjectDesc, error) {
 	prog, err := parseModule(source)
 	if err != nil {
 		return nil, fmt.Errorf("parse objects: %w", err)
@@ -164,6 +174,9 @@ func ParseAllObjectDescs(source string) ([]schema.ObjectDesc, error) {
 		enumNames:         make(map[string]bool),
 		typeAliases:       make(map[string]*typeAnnotation),
 		importedTypeDescs: make(map[string]schema.TypeDesc),
+	}
+	for _, name := range externalEnumNames {
+		ctx.enumNames[name] = true
 	}
 	for _, stmt := range prog.Stmts {
 		switch s := stmt.(type) {

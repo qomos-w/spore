@@ -49,7 +49,7 @@ func TestRender_MediaFieldEmitsCarrierAndValidation(t *testing.T) {
 	if !galleryField.MatchString(got) {
 		t.Fatalf("expected gallery []Media field:\n%s", got)
 	}
-	if !strings.Contains(got, "import \"github.com/qomos-w/spore/schema\"") {
+	if !strings.Contains(got, "\"github.com/qomos-w/spore/schema\"") {
 		t.Fatalf("expected schema import for media validation:\n%s", got)
 	}
 }

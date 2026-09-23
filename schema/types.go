@@ -150,11 +150,23 @@ type CallableDesc struct {
 // from the `description:"..."` struct tag; the foundational-Class path leaves
 // it empty until that vocabulary grows a doc channel.
 type FieldDesc struct {
-	Name        string   `json:"name"`
-	Type        TypeDesc `json:"type"`
-	Description string   `json:"description,omitempty"`
-	Private     bool     `json:"private,omitempty"`  // true if field has private access modifier
-	Optional    bool     `json:"optional,omitempty"` // true if field is declared with the optional modifier
+	Name        string    `json:"name"`
+	Type        TypeDesc  `json:"type"`
+	Description string    `json:"description,omitempty"`
+	Private     bool      `json:"private,omitempty"`  // true if field has private access modifier
+	Optional    bool      `json:"optional,omitempty"` // true if field is declared with the optional modifier
+	IsKey       bool      `json:"isKey,omitempty"`    // true if declared with the key modifier (@data tables only)
+	Ref         *FieldRef `json:"ref,omitempty"`      // non-nil if the field carries an @ref(T[.field]) decorator
+}
+
+// FieldRef is the @data foreign-key decoration captured from an @ref(T) or
+// @ref(T.field) field decorator. Target is the referenced @data struct name;
+// Field is the optional explicit target field (empty means the target's key
+// field). Validation that the target exists, is @data and is string-keyed
+// happens at generation time, not parse time.
+type FieldRef struct {
+	Target string `json:"target"`
+	Field  string `json:"field,omitempty"`
 }
 
 // MethodDesc describes a method in an object shape.
@@ -188,6 +200,8 @@ type ObjectDesc struct {
 	Methods     []MethodDesc `json:"methods,omitempty"`    // class methods (including constructor)
 	SchemaID    uint64       `json:"schemaId,omitempty"`    // optional stable schema id declared in source
 	IsComponent bool         `json:"isComponent,omitempty"` // true if declared @component (ECS component)
+	IsData      bool         `json:"isData,omitempty"`      // true if declared @data (keyed data-table row type; never an ECS component)
+	DataVersion uint64       `json:"dataVersion,omitempty"` // @version(N) on a @data struct; 0 means unversioned
 }
 
 // InterfaceDesc describes an interface declaration.

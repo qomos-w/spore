@@ -73,6 +73,17 @@ type GoTypesOptions = gotypes.Options
 // RenderGoTypesRegistry.
 type RegistryEntry = gotypes.RegistryEntry
 
+// EnumImport is one external enum package referenced by a Go-types render.
+type EnumImport = gotypes.EnumImport
+
+// DataTableEntry is one @data struct in the manifest consumed by
+// RenderGoTypesDataTables.
+type DataTableEntry = gotypes.DataTableEntry
+
+// RefShapeEntry is one @ref(T) / @ref(T.field) declaration in the manifest
+// consumed by RenderGoTypesDataTables.
+type RefShapeEntry = gotypes.RefShapeEntry
+
 // ParseVisibility accepts the canonical string form and returns the matching
 // enum value and ok=true. If the string is unknown, ok=false is returned.
 func ParseVisibility(s string) (Visibility, bool) {
@@ -112,6 +123,26 @@ func RenderGoTypes(objs []schema.ObjectDesc, opts GoTypesOptions) ([]byte, error
 // internal/gen/go-types.RenderRegistry.
 func RenderGoTypesRegistry(entries []RegistryEntry, opts GoTypesOptions) ([]byte, error) {
 	return gotypes.RenderRegistry(entries, opts)
+}
+
+// ValidateGoTypesDataTables enforces the @data declaration rules across one
+// codegen run (single key per table, key type constraints, @ref targets).
+// enumNames is the set of known enum names, local and imported. See
+// internal/gen/go-types.ValidateDataTables.
+func ValidateGoTypesDataTables(objs []schema.ObjectDesc, enumNames map[string]bool) error {
+	return gotypes.ValidateDataTables(objs, enumNames)
+}
+
+// RenderGoTypesDataTables renders the datatables.gen.go manifest (DataTables +
+// RefShapes) for @data structs. See internal/gen/go-types.RenderDataTables.
+func RenderGoTypesDataTables(tables []DataTableEntry, refs []RefShapeEntry, opts GoTypesOptions) ([]byte, error) {
+	return gotypes.RenderDataTables(tables, refs, opts)
+}
+
+// BuildGoTypesDataTables derives DataTableEntry/RefShapeEntry lists from
+// validated @data ObjectDescs. See internal/gen/go-types.BuildDataTables.
+func BuildGoTypesDataTables(objs []schema.ObjectDesc, opts GoTypesOptions) ([]DataTableEntry, []RefShapeEntry, error) {
+	return gotypes.BuildDataTables(objs, opts)
 }
 
 // AssignSequentialSchemaIDs fills in schema IDs from a source-file label

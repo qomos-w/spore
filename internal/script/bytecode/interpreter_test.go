@@ -2573,9 +2573,9 @@ fun access(): int {
 
 func TestInterpreter_MapDeleteBuiltinWorksWithDynamicKey(t *testing.T) {
 	source := `
-fun remove(key: string): int {
+	fun remove(k: string): int {
   var m: map<string, int> = {"a": 1, "b": 2}
-  delete(m, key)
+  delete(m, k)
   return len(m)
 }`
 	argVM := vm.NewVM(4096, 256)
@@ -3092,18 +3092,18 @@ fun classify(): int {
 func TestInterpreter_ScenarioNestedCollectionTransform(t *testing.T) {
 	source := `
 struct Entry {
-  key: string
+  name: string
   value: int
 }
 fun transform(): int {
   var entries: array<Entry> = [
-    Entry{key: "hp", value: 3},
-    Entry{key: "mp", value: 4},
-    Entry{key: "hp", value: 5}
+    Entry{name: "hp", value: 3},
+    Entry{name: "mp", value: 4},
+    Entry{name: "hp", value: 5}
   ]
   var totals: map<string, int> = {"hp": 0, "mp": 0}
   for (entry in entries) {
-    totals[entry.key] = totals[entry.key] + entry.value
+    totals[entry.name] = totals[entry.name] + entry.value
   }
   return totals["hp"] * 10 + totals["mp"]
 }`
@@ -4472,11 +4472,11 @@ class Node {
     this.value = v
     this.links = {}
   }
-  fun link(key: string, other: Node) {
-    this.links[key] = [other]
+  fun link(k: string, other: Node) {
+    this.links[k] = [other]
   }
-  fun read(key: string): int {
-    return this.links[key][0].value
+  fun read(k: string): int {
+    return this.links[k][0].value
   }
 }
 stream fun run(): int {
@@ -4522,12 +4522,12 @@ class Node {
     this.value = v
     this.links = {}
   }
-  fun link(key: string, other: Node) {
-    this.links[key] = [other]
+  fun link(k: string, other: Node) {
+    this.links[k] = [other]
   }
-  fun bumpOther(key: string, delta: int): int {
-    this.links[key][0].value = this.links[key][0].value + delta
-    return this.links[key][0].value
+  fun bumpOther(k: string, delta: int): int {
+    this.links[k][0].value = this.links[k][0].value + delta
+    return this.links[k][0].value
   }
 }
 stream fun run(): int {

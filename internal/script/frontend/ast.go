@@ -92,6 +92,8 @@ type structStmt struct {
 	Exported    bool
 	SchemaID    uint64
 	IsComponent bool
+	IsData      bool
+	DataVersion uint64
 }
 
 func (s *structStmt) pos() (int, int) { return s.tok.line, s.tok.col }
@@ -179,6 +181,15 @@ type astFieldDecl struct {
 	Type_    *typeAnnotation
 	Access   accessModifier
 	Optional bool
+	Key      bool
+	Ref      *fieldRef
+}
+
+// fieldRef is the parsed @ref(T) / @ref(T.field) field decorator. Field is
+// empty when the reference targets the referenced struct's key field.
+type fieldRef struct {
+	Target string
+	Field  string
 }
 
 // typeAnnotation represents a type reference in source code.

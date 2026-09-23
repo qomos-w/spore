@@ -74,6 +74,7 @@ const (
 	tokAsync    // reserved — compiler rejects
 	tokAwait    // reserved — compiler rejects
 	tokOptional // optional — struct/class field modifier marking nullable wire fields
+	tokKey      // key — struct field modifier marking the @data table key field
 	tokTry      // try — error-capturing block statement
 	tokCatch    // catch — handler clause of a try statement
 	tokDefer    // defer — deferred execution block statement
@@ -184,6 +185,7 @@ var keywords = map[string]tokenType{
 	"async":       tokAsync,
 	"await":       tokAwait,
 	"optional":    tokOptional,
+	"key":         tokKey,
 	"try":         tokTry,
 	"catch":       tokCatch,
 	"defer":       tokDefer,
@@ -317,6 +319,8 @@ func (t tokenType) String() string {
 		return "await"
 	case tokOptional:
 		return "optional"
+	case tokKey:
+		return "key"
 	case tokTry:
 		return "try"
 	case tokCatch:

@@ -960,18 +960,18 @@ func TestVMFrontend_ScenarioNestedCollectionTransform(t *testing.T) {
 	f := newVMFrontend(t)
 	source := `
 struct Entry {
-  key: string
+  name: string
   value: int
 }
 fun transform(): int {
   var entries: array<Entry> = [
-    Entry{key: "hp", value: 3},
-    Entry{key: "mp", value: 4},
-    Entry{key: "hp", value: 5}
+    Entry{name: "hp", value: 3},
+    Entry{name: "mp", value: 4},
+    Entry{name: "hp", value: 5}
   ]
   var totals: map<string, int> = {"hp": 0, "mp": 0}
   for (entry in entries) {
-    totals[entry.key] = totals[entry.key] + entry.value
+    totals[entry.name] = totals[entry.name] + entry.value
   }
   return totals["hp"] * 10 + totals["mp"]
 }`

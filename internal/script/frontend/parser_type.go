@@ -45,12 +45,38 @@ func (p *parser) parseFieldList() []*astFieldDecl {
 	seen := make(map[string]bool)
 
 	for !p.curIs(tokRBrace) && !p.curIs(tokEOF) && !p.curIs(tokError) {
+		// Field decorators: only @ref(T) / @ref(T.field) is valid in field
+		// position. Other annotation names are rejected here rather than
+		// silently ignored.
+		var ref *fieldRef
+		for p.curIs(tokAt) {
+			p.nextToken() // consume @
+			ann := p.expectIdent()
+			switch ann {
+			case "ref":
+				parsed := p.parseRefAnnotationArgs()
+				if ref != nil {
+					p.addError("duplicate @ref annotation on field")
+				} else {
+					ref = parsed
+				}
+			default:
+				p.addError(fmt.Sprintf("expected ref annotation, got @%s", ann))
+			}
+		}
 		optional := false
 		// `optional` is a field-prefix modifier. Treat as modifier only when
 		// followed by something that isn't `:`, so `optional: T` (a field
 		// literally named "optional") still parses as a field name.
 		if p.curIs(tokOptional) && !p.pkIs(tokColon) {
 			optional = true
+			p.nextToken()
+		}
+		// `key` marks the @data table key field, with the same disambiguation
+		// as `optional` so `key: T` remains a valid field name.
+		key := false
+		if p.curIs(tokKey) && !p.pkIs(tokColon) {
+			key = true
 			p.nextToken()
 		}
 		fieldName := p.expectFieldName()
@@ -72,6 +98,8 @@ func (p *parser) parseFieldList() []*astFieldDecl {
 			Name:     &ident{tok: p.cur, Value: fieldName},
 			Type_:    fieldType,
 			Optional: optional,
+			Key:      key,
+			Ref:      ref,
 		})
 
 		if p.curIs(tokComma) {
