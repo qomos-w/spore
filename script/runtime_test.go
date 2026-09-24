@@ -131,6 +131,31 @@ func TestRuntimeBindFuncExposesBoundFunctionSurface(t *testing.T) {
 	}
 }
 
+func TestRuntimeLongCounterLoopDecodesCountersCorrectly(t *testing.T) {
+	rt, err := NewRuntime()
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if err := rt.LoadSource("loop", `export fun sum(k: long): long {
+		var n: long = k
+		var s: long = 0
+		for (var i: long = 0; i < n; i = i + 1) { s = s + 1 }
+		return s
+	}`); err != nil {
+		t.Fatalf("LoadSource: %v", err)
+	}
+	r, err := rt.Call("sum", int64(5))
+	if err != nil {
+		t.Fatalf("Call sum: %v", err)
+	}
+	if r.Error != nil {
+		t.Fatalf("sum errored: %v", r.Error)
+	}
+	if got, ok := r.Value.(int64); !ok || got != 5 {
+		t.Fatalf("sum(5) = %#v, want int64(5)", r.Value)
+	}
+}
+
 func TestRuntimeRootModuleEmptyBeforeLoad(t *testing.T) {
 	rt, err := NewRuntime()
 	if err != nil {

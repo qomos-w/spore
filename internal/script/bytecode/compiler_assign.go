@@ -34,8 +34,12 @@ func (c *compiler) compileAssignExpr(e *frontend.AssignExpr) {
 		}
 		// Fast path: x = x + 1  →  INC_LOCAL
 		//            x = x - 1  →  DEC_LOCAL
+		// opIncLocal/opDecLocal rewrite the slot as a tagged int, so only
+		// int-typed locals qualify: fusing a long counter would re-tag the
+		// slot as int and later typed accesses (e.g. opLtLong) would fail
+		// to decode it.
 		if inc, ok := isIncDecPattern(target.Value, e.Value); ok {
-			if localIdx := c.resolveLocal(target.Value); localIdx >= 0 {
+			if localIdx := c.resolveLocal(target.Value); localIdx >= 0 && c.localTypeName(target.Value) == "int" {
 				if inc {
 					c.emit(opIncLocal, int32(localIdx), c.curLine)
 				} else {

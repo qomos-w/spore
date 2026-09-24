@@ -133,6 +133,23 @@ func TestCompiler_SumBytecodeUsesFusedLocalIntAdd(t *testing.T) {
 	}
 }
 
+func TestCompiler_DoesNotFuseIncDecOnLongCounters(t *testing.T) {
+	c, _ := compileSource(t, `fun f(n: long): long {
+		var s: long = 0
+		for (var i: long = 0; i < n; i = i + 1) { s = s + 1 }
+		return s
+	}`)
+	fn := getFuncChunk(t, c, "f")
+	// opIncLocal/opDecLocal re-tag the slot as int; a long counter must not
+	// take that fused path or the following opLtLong fails to decode it.
+	if count := countOpcode(fn, opIncLocal); count != 0 {
+		t.Fatalf("expected no opIncLocal for long counter update, got %d", count)
+	}
+	if count := countOpcode(fn, opAddLocalInt); count != 0 {
+		t.Fatalf("expected no opAddLocalInt for long accumulator update, got %d", count)
+	}
+}
+
 func TestCompiler_DoesNotFuseReversedLocalIntAdd(t *testing.T) {
 	c, _ := compileSource(t, `fun f(n: int): int {
 		var s: int = 0
