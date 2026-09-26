@@ -22,8 +22,8 @@ import (
 
 // buildLargeNestedBatchEnvelope mirrors the ecsbind.World.View return shape
 // ("ids": []string, "data": map<string, []map<string, any>>) at large N.
-// N=4000 reliably overflows an explicit 64 KiB heap and fits comfortably in
-// the 1 MiB budget.
+// N=4000 reliably overflows an explicit 64 KiB heap (byte budget: 8 KiB
+// slots) and fits comfortably in the 8 MiB budget.
 func buildLargeNestedBatchEnvelope(n int) map[string]any {
 	ids := make([]string, n)
 	entries := make([]map[string]any, n)
@@ -113,7 +113,7 @@ export fun count(): int {
 // materialise the same nested envelope end-to-end.
 func TestRuntime_LargeBudgetMaterialisesNestedReturn(t *testing.T) {
 	rt, err := script.NewRuntimeWith(script.RuntimeOptions{
-		VMHeapBytes: 1 << 20,
+		VMHeapBytes: 8 << 20,
 		VMHeapSlots: 1024,
 	})
 	if err != nil {
@@ -161,7 +161,7 @@ export fun count(): int {
 // remember to re-apply the knob every reload.
 func TestRuntime_LargeBudgetPersistsAcrossReset(t *testing.T) {
 	rt, err := script.NewRuntimeWith(script.RuntimeOptions{
-		VMHeapBytes: 1 << 20,
+		VMHeapBytes: 8 << 20,
 		VMHeapSlots: 1024,
 	})
 	if err != nil {
@@ -213,7 +213,7 @@ export fun count(): int {
 // for Clone(): the cloned Runtime must inherit the opt-in budget.
 func TestRuntime_LargeBudgetPersistsAcrossClone(t *testing.T) {
 	rt, err := script.NewRuntimeWith(script.RuntimeOptions{
-		VMHeapBytes: 1 << 20,
+		VMHeapBytes: 8 << 20,
 		VMHeapSlots: 1024,
 	})
 	if err != nil {

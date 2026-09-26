@@ -100,6 +100,12 @@ func NewVMEvaluator() *VMEvaluator {
 	return NewVMEvaluatorWith(0, 0)
 }
 
+// vmWordSize:一个 memory 槽(vm.memory []uint64 的元素)的字节数。
+// VMHeapBytes 契约以字节计(见 DefaultVMHeapBytes),而 vm.NewVM 的首个参数
+// 是槽位数——这里做一次换算,避免"4 MiB 预算"被解释成 4M 槽(32MiB 实占,
+// 每 Runtime 8 倍膨胀;游戏宿主 29 个 Runtime 曾因此常驻 ~960MB)。
+const vmWordSize = 8
+
 // NewVMEvaluatorWith creates a new VM-backed evaluator with a custom VM
 // memory budget. A heapBytes of 0 (or negative) means
 // DefaultVMHeapBytes (4 MiB); a slots of 0 (or negative) means
@@ -109,7 +115,7 @@ func NewVMEvaluator() *VMEvaluator {
 // DefaultVMHeapBytes for the contract.
 func NewVMEvaluatorWith(heapBytes, slots int) *VMEvaluator {
 	heapBytes, slots = resolveVMBudget(heapBytes, slots)
-	v := vm.NewVM(heapBytes, slots)
+	v := vm.NewVM(heapBytes/vmWordSize, slots)
 	eval := &VMEvaluator{
 		vm_:                v,
 		chunks:             make(map[string]*Chunk),
@@ -178,7 +184,7 @@ func (e *VMEvaluator) registerRootProvider() {
 func (e *VMEvaluator) CompileLoweredProgram(compiled frontend.CompiledDeclarations, prog *frontend.Program) error {
 	compiler := NewCompiler()
 	compiler.nativeCapabilities = e.nativeCapabilitiesCopy()
-	e.vm_ = vm.NewVM(e.vmHeapBytes, e.vmHeapSlots)
+	e.vm_ = vm.NewVM(e.vmHeapBytes/vmWordSize, e.vmHeapSlots)
 	e.notifyVMReplaced()
 	e.importedNativeValues = nil
 	for _, imported := range compiled.ImportedSymbols() {
