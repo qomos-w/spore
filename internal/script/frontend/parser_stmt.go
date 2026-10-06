@@ -153,6 +153,23 @@ func (p *parser) parseForStmt() statement {
 	tok := p.cur
 	p.nextToken() // consume 'for'
 
+	// Paren-less for-in: for name in iterable { ... } (SYNTAX.md §Control
+	// Flow). The parenthesised form below is the equivalent long form.
+	if p.curIs(tokIdent) && p.pkIs(tokIn) {
+		varName := p.cur.lexeme
+		p.nextToken() // consume variable name
+		p.nextToken() // consume 'in'
+		iterable := p.parseExpression()
+		body := p.parseBlockStmt()
+		return &forStmt{
+			tok:      tok,
+			IsForIn:  true,
+			Variable: varName,
+			Iterable: iterable,
+			Body:     body,
+		}
+	}
+
 	// Check for for-in: for (name in iterable) { ... }
 	if p.curIs(tokLParen) {
 		p.nextToken() // consume '('

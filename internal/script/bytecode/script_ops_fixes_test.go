@@ -324,6 +324,181 @@ func TestFix7_TernaryExprBodyFun(t *testing.T) {
 	}
 }
 
+// --- Short-form T[] type syntax (== array<T>, SYNTAX.md §2.2) ---
+
+func TestShortForm_ArrayVarDeclAndPush(t *testing.T) {
+	src := `
+fun main(): int {
+	var xs: int[] = [1, 2]
+	xs.push(3)
+	return len(xs)
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestShortForm_ArrayFnParamPush(t *testing.T) {
+	src := `
+fun f(xs: int[]): int {
+	xs.push(3)
+	return len(xs)
+}
+fun main(): int { return f([1, 2]) }
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestShortForm_StringArrayPush(t *testing.T) {
+	src := `
+fun main(): int {
+	var xs: string[] = ["a"]
+	xs.push("b")
+	return len(xs)
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 2 {
+		t.Fatalf("expected 2, got %d", got)
+	}
+}
+
+func TestShortForm_PushExpressionPosition(t *testing.T) {
+	src := `
+fun main(): int {
+	var xs: int[] = [1, 2]
+	var y: int = xs.push(3)
+	return y
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestShortForm_NestedArray(t *testing.T) {
+	src := `
+fun main(): int {
+	var grid: int[][] = [[1, 2], [3, 4]]
+	grid.push([5, 6])
+	return len(grid)
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestShortForm_ClassContainerField(t *testing.T) {
+	src := `
+class C {
+	items: int[]
+	fun add(v: int): int {
+		this.items.push(v)
+		return len(this.items)
+	}
+}
+fun main(): int {
+	var c: C = new C()
+	c.add(10)
+	return c.add(20)
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 2 {
+		t.Fatalf("expected 2, got %d", got)
+	}
+}
+
+// --- for-in: paren-less and parenthesised forms are equivalent (SYNTAX.md) ---
+
+func TestForIn_ParenlessForm(t *testing.T) {
+	src := `
+fun main(): int {
+	var sum: int = 0
+	var xs: array<int> = [1, 2, 3]
+	for x in xs {
+		sum = sum + x
+	}
+	return sum
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 6 {
+		t.Fatalf("expected 6, got %d", got)
+	}
+}
+
+func TestForIn_ParenForm(t *testing.T) {
+	src := `
+fun main(): int {
+	var sum: int = 0
+	var xs: int[] = [1, 2, 3]
+	for (x in xs) {
+		sum = sum + x
+	}
+	return sum
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 6 {
+		t.Fatalf("expected 6, got %d", got)
+	}
+}
+
+func TestForIn_ParenlessOverShortFormType(t *testing.T) {
+	// The two fixes compose: short-form type + paren-less for-in, the exact
+	// shape LLM authors write first.
+	src := `
+fun main(): int {
+	var sum: int = 0
+	var xs: int[] = [1, 2, 3]
+	for x in xs {
+		sum = sum + x
+	}
+	return sum
+}
+`
+	result, err := compileAndCall(t, src, "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.DecodeInt(result); got != 6 {
+		t.Fatalf("expected 6, got %d", got)
+	}
+}
+
 // testDecodeString unwraps a VM string value for test assertions.
 func testDecodeString(t *testing.T, v *vm.VM, val vm.Value) string {
 	t.Helper()

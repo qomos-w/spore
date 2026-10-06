@@ -2456,8 +2456,22 @@ func TestParser_ForInLoopParses(t *testing.T) {
 	}
 }
 
-func TestParser_ForInLoopWithoutParensRejected(t *testing.T) {
-	expectParseError(t, "fun f(): void { for item in items {} }")
+func TestParser_ForInLoopParenlessAccepted(t *testing.T) {
+	// `for item in items {}` is the documented form (SYNTAX.md grammar
+	// table and stream examples); `for (item in items)` is the equivalent
+	// parenthesised form. Both must parse.
+	prog := parseProg(t, "fun f(): void { for item in items {} }")
+	fn := prog.Stmts[0].(*funStmt)
+	fs := fn.Body.Stmts[0].(*forStmt)
+	if !fs.IsForIn || fs.Variable != "item" {
+		t.Fatalf("expected for-in with variable 'item', got %+v", fs)
+	}
+	prog2 := parseProg(t, "fun f(): void { for (item in items) {} }")
+	fn2 := prog2.Stmts[0].(*funStmt)
+	fs2 := fn2.Body.Stmts[0].(*forStmt)
+	if !fs2.IsForIn || fs2.Variable != "item" {
+		t.Fatalf("expected paren form for-in with variable 'item', got %+v", fs2)
+	}
 }
 
 func TestParser_WhenRequiresSubjectExpression(t *testing.T) {

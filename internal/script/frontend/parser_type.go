@@ -145,6 +145,21 @@ func scalarTypeName(t token) (string, bool) {
 	}
 }
 func (p *parser) parseTypeAnnotation() *typeAnnotation {
+	t := p.parseBaseTypeAnnotation()
+	// Postfix array short form: `T[]` is the long form `array<T>` written
+	// postfix (SYNTAX.md §2.2), chainable for nested arrays (`int[][]`).
+	// Consume only the unambiguous `[` `]` pair; anything else belongs to
+	// the enclosing production so malformed-input recovery keeps working.
+	for t.Name != "" && t.Name != "void" && p.curIs(tokLBracket) && p.pkIs(tokRBracket) {
+		bracketTok := p.cur
+		p.nextToken() // consume '['
+		p.nextToken() // consume ']'
+		t = &typeAnnotation{tok: bracketTok, Name: "array", Params: []*typeAnnotation{t}}
+	}
+	return t
+}
+
+func (p *parser) parseBaseTypeAnnotation() *typeAnnotation {
 	tok := p.cur
 
 	if p.curIs(tokVoid) {
