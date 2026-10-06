@@ -95,6 +95,11 @@ func NewInvocationOutcome(result InvocationResultDesc, payload any) (InvocationO
 	return invoke.NewInvocationOutcome(result, payload)
 }
 
+// NewInvocationOutcomeWithUsage is NewInvocationOutcome with usage telemetry.
+func NewInvocationOutcomeWithUsage(result InvocationResultDesc, payload any, usage *invoke.InvocationUsage) (InvocationOutcome, error) {
+	return invoke.NewInvocationOutcomeWithUsage(result, payload, usage)
+}
+
 func ValidateInvocationArgs(desc schema.CallableDesc, args []any) error {
 	return invoke.ValidateInvocationArgs(desc, args)
 }

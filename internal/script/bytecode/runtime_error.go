@@ -60,6 +60,7 @@ var runtimeErrorDiagnosticCodes = []diagnostics.CodeInfo{
 	// not as a program bug they can repair. See doc.go for the dual-track
 	// contract that defines when a panic is the correct signal.
 	{Code: "vm_internal_panic", Category: diagnostics.CategoryRuntime, Description: "A VM internal invariant was violated and surfaced as a panic", Hint: "这是 VM 内部缺陷（不变量被破坏）而非脚本错误；请保留 message 中的 panic 值与复现脚本并上报"},
+	{Code: "unknown_array_method", Category: diagnostics.CategoryRuntime, Description: "A method call targeted an array receiver but the method name is not an array builtin", Hint: "数组的方法形式仅支持 push；其他操作请使用 push/len 等内建函数"},
 }
 
 func init() {

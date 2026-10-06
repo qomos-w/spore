@@ -87,15 +87,41 @@ func (a *ScriptCallableAdapter) Invoke(req invoke.InvocationRequest) (invoke.Inv
 		if err != nil {
 			return invoke.InvocationOutcome{}, err
 		}
-		return invoke.NewInvocationOutcome(result, nil)
+		return invoke.NewInvocationOutcomeWithUsage(result, nil, a.lastBackendUsage())
 	}
+	usage := a.lastBackendUsage()
 	if cached, ok := a.results.Load(req.Stage); ok {
-		return invoke.NewInvocationOutcome(cached.(invoke.InvocationResultDesc), payload)
+		outcome, err := invoke.NewInvocationOutcomeWithUsage(cached.(invoke.InvocationResultDesc), payload, usage)
+		if err != nil {
+			return invoke.InvocationOutcome{}, err
+		}
+		return outcome, nil
 	}
 	result, err := invoke.DescribeInvocationResult(a.desc, req.Stage)
 	if err != nil {
 		return invoke.InvocationOutcome{}, err
 	}
 	a.results.Store(req.Stage, result)
-	return invoke.NewInvocationOutcome(result, payload)
+	outcome, err := invoke.NewInvocationOutcomeWithUsage(result, payload, usage)
+	if err != nil {
+		return invoke.InvocationOutcome{}, err
+	}
+	return outcome, nil
+}
+
+// lastBackendUsage captures the VM cost of the call that just ran, when the
+// backend reports usage. Non-VM backends yield nil.
+func (a *ScriptCallableAdapter) lastBackendUsage() *invoke.InvocationUsage {
+	if a == nil || a.runtime == nil {
+		return nil
+	}
+	reporter, ok := a.runtime.(UsageReportingBackend)
+	if !ok {
+		return nil
+	}
+	usage := reporter.LastUsage()
+	if usage.Instructions == 0 && usage.HostCalls == 0 && usage.DurationNanos == 0 {
+		return nil
+	}
+	return &usage
 }

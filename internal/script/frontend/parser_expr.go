@@ -165,6 +165,8 @@ func (p *parser) parseInfix(left expression) expression {
 		return p.parseAssignExpr(left)
 	case tokQuestionQuestion:
 		return p.parseNullCoalesceExpr(left)
+	case tokQuestion:
+		return p.parseTernaryExpr(left)
 	case tokQuestionDot:
 		return p.parseOptionalMemberExpr(left)
 	case tokLParen:
@@ -661,6 +663,18 @@ func (p *parser) parseNullCoalesceExpr(left expression) expression {
 	p.nextToken() // consume '??'
 	right := p.parseExpressionWithPrecedence(coalescePrec)
 	return &nullCoalesceExpr{tok: tok, Left: left, Right: right}
+}
+
+// parseTernaryExpr parses `cond ? then : else`. Right-associative: the else
+// branch parses at the same precedence so chained ternaries nest to the
+// right (`a ? b : c ? d : e` ≡ `a ? b : (c ? d : e)`).
+func (p *parser) parseTernaryExpr(cond expression) expression {
+	tok := p.cur
+	p.nextToken() // consume '?'
+	thenBranch := p.parseExpressionWithPrecedence(assignPrec)
+	p.expect(tokColon)
+	elseBranch := p.parseExpressionWithPrecedence(ternaryPrec)
+	return &ternaryExpr{tok: tok, Cond: cond, Then: thenBranch, Else: elseBranch}
 }
 
 func (p *parser) parseIndexExpr(left expression) expression {

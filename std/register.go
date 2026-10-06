@@ -79,6 +79,7 @@ func builtinModules() []Module {
 		NewModule("regexp", regexp.Register),
 		NewModule("strconv", strconv.Register),
 		NewModule("strings", strings.Register),
+		NewModule("std", strings.RegisterStd),
 		NewModule("time", time.Register),
 		NewModule("url", url.Register),
 		NewModule("uuid", uuid.Register),

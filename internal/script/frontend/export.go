@@ -56,6 +56,7 @@ type (
 	SuperExpr         = superExpr
 	LambdaExpr        = lambdaExpr
 	NullCoalesceExpr  = nullCoalesceExpr
+	TernaryExpr       = ternaryExpr
 	OptionalChainExpr = optionalChainExpr
 )
 

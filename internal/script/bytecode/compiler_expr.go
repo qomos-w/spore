@@ -61,6 +61,8 @@ func (c *compiler) compileExpression(expr frontend.Expression) {
 		c.compileMemberExpr(e)
 	case *frontend.NullCoalesceExpr:
 		c.compileNullCoalesceExpr(e)
+	case *frontend.TernaryExpr:
+		c.compileTernaryExpr(e)
 	case *frontend.OptionalChainExpr:
 		c.compileOptionalChainExpr(e)
 	case *frontend.IndexExpr:
@@ -376,6 +378,16 @@ func (c *compiler) inferScalarType(expr frontend.Expression) string {
 			return lt
 		}
 		return ""
+	case *frontend.TernaryExpr:
+		// `c ? a : b` unifies the branch types when they agree.
+		tt := c.inferScalarType(e.Then)
+		if tt == "" {
+			return ""
+		}
+		if et := c.inferScalarType(e.Else); tt == et {
+			return tt
+		}
+		return ""
 	case *frontend.OptionalChainExpr:
 		// The chain yields the inner type on the non-null path.
 		return c.inferScalarType(e.Expr)
@@ -477,6 +489,21 @@ func (c *compiler) compileCallExpr(e *frontend.CallExpr) {
 			c.compileExpression(e.Arguments[1]) // key
 			c.emit(opMapDelete, 0, c.curLine)
 			return
+		}
+		if ident.Value == "get" {
+			// Only shadow-safe as a builtin: user-declared `get` locals,
+			// globals, functions, or imported natives take precedence over
+			// the map builtin. A `get` call that is not exactly (map, key,
+			// default) is left to the normal call paths.
+			_, isUserFn := c.functions[ident.Value]
+			_, isUserGlobal := c.globals[ident.Value]
+			if c.resolveLocal(ident.Value) < 0 && !isUserFn && !isUserGlobal && len(e.Arguments) == 3 {
+				c.compileExpression(e.Arguments[0]) // map
+				c.compileExpression(e.Arguments[1]) // key
+				c.compileExpression(e.Arguments[2]) // default
+				c.emit(opMapGetDefault, 0, c.curLine)
+				return
+			}
 		}
 		callName := ident.Value
 		// Value-call path: if the callee identifier resolves to a local variable
@@ -686,6 +713,19 @@ func (c *compiler) compileNullCoalesceExpr(e *frontend.NullCoalesceExpr) {
 	jumpEnd := c.emit(opJumpIfNotNull, 0, c.curLine)
 	c.emit(opPop, 0, c.curLine)
 	c.compileExpression(e.Right)
+	c.chunk.patchJump(jumpEnd, c.chunk.size())
+}
+
+// compileTernaryExpr desugars `cond ? then : else` into balanced conditional
+// jumps: exactly one branch executes and leaves exactly one value.
+// opJumpIfFalse/opJump pop the condition themselves.
+func (c *compiler) compileTernaryExpr(e *frontend.TernaryExpr) {
+	c.compileExpression(e.Cond)
+	jumpElse := c.emit(opJumpIfFalse, 0, c.curLine)
+	c.compileExpression(e.Then)
+	jumpEnd := c.emit(opJump, 0, c.curLine)
+	c.chunk.patchJump(jumpElse, c.chunk.size())
+	c.compileExpression(e.Else)
 	c.chunk.patchJump(jumpEnd, c.chunk.size())
 }
 

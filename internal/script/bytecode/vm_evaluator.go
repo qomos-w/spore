@@ -3,6 +3,7 @@ package bytecode
 import (
 	"context"
 	"fmt"
+
 	"github.com/qomos-w/spore/invoke"
 	"reflect"
 	"strings"
@@ -43,6 +44,19 @@ type VMEvaluator struct {
 	// execState is the per-call execution-budget counter, reused across
 	// calls (zeroed at the start of every EvaluateContext).
 	execState invoke.ExecutionState
+	// lastUsage snapshots execState after the most recent EvaluateContext,
+	// plus its wall-clock duration. Read via LastUsage.
+	lastUsage invoke.InvocationUsage
+}
+
+// LastUsage returns the measured cost of the most recent EvaluateContext on
+// this evaluator. Values are zero before the first call or when the callable
+// was not found (no execution happened).
+func (e *VMEvaluator) LastUsage() invoke.InvocationUsage {
+	if e == nil {
+		return invoke.InvocationUsage{}
+	}
+	return e.lastUsage
 }
 
 // Default VM memory budget applied when a VMEvaluator is built without an
@@ -366,6 +380,7 @@ func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.Executi
 	if err := invoke.CheckExecution(ctx, budget, state); err != nil {
 		return nil, err
 	}
+	start := time.Now()
 	e.interp.ctx = ctx
 	e.interp.budget = budget
 	e.interp.execution = state
@@ -375,6 +390,11 @@ func (e *VMEvaluator) EvaluateContext(ctx context.Context, budget invoke.Executi
 		result, callErr = e.executeFinal(callable, chunk, vmArgs)
 	} else {
 		result, callErr = e.interp.ExecuteFunction(chunk, stage, vmArgs)
+	}
+	e.lastUsage = invoke.InvocationUsage{
+		Instructions:  state.Instructions,
+		HostCalls:     state.HostCalls,
+		DurationNanos: time.Since(start).Nanoseconds(),
 	}
 	if callErr != nil {
 		if rtErr, ok := callErr.(*RuntimeError); ok {

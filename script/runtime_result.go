@@ -3,6 +3,7 @@ package script
 import (
 	"fmt"
 
+	"github.com/qomos-w/spore/invoke"
 	"github.com/qomos-w/spore/internal/script/bytecode"
 )
 
@@ -32,6 +33,10 @@ import (
 type Result struct {
 	Value any
 	Error *RuntimeError
+	// Usage reports the invocation's measured VM cost (instructions, host
+	// calls, wall-clock duration). Nil when the backend does not report
+	// usage or the call failed before execution.
+	Usage *invoke.InvocationUsage
 	err   error // host-side error captured for Unwrap
 }
 

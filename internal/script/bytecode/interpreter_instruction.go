@@ -2,6 +2,8 @@ package bytecode
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/qomos-w/spore/diagnostics"
 	"github.com/qomos-w/spore/internal/script/vm"
@@ -774,6 +776,26 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 			interp.push(result)
 			break
 		}
+		// Built-in methods on array receivers (`xs.push(v)`): the free
+		// function form is the canonical spelling, but the method form must
+		// not fall through to class dispatch, which misfires with panics
+		// like "object class not found" on a container handle.
+		if vm.IsHandle(receiver) {
+			if arrHandle := vm.DecodeHandle(receiver); interp.vm_.IsArray(arrHandle) {
+				switch methodName {
+				case "push":
+					if len(args) != 1 {
+						return vm.EncodeInt(0), false, &RuntimeError{Code: "invalid_argument_count", Category: diagnostics.CategoryRuntime, Callable: interp.function, Line: interp.lineForIP(), Path: "vm/array/method", Message: fmt.Sprintf("array.push expects exactly 1 argument, got %d", len(args))}
+					}
+					interp.vm_.ArrayPush(arrHandle, args[0])
+					interp.push(vm.EncodeInt(int32(interp.vm_.ArrayLength(arrHandle))))
+					break
+				default:
+					return vm.EncodeInt(0), false, &RuntimeError{Code: "unknown_array_method", Category: diagnostics.CategoryRuntime, Callable: interp.function, Line: interp.lineForIP(), Path: "vm/array/method", Message: fmt.Sprintf("arrays have no method %q; use the push(...) builtin for appending", methodName)}
+				}
+				break
+			}
+		}
 		objHandle := vm.DecodeHandle(receiver)
 		result := interp.vm_.CallMethod(objHandle, methodName, args)
 		interp.push(result)
@@ -898,6 +920,16 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 			switch typeName {
 			case "string":
 				isTargetType = interp.vm_.IsStringValue(val)
+				if !isTargetType && interp.vm_.IsMap(objHandle) {
+					// Error-map bridge: a catch value is a map with a
+					// "message" field; `e as string` yields that text so
+					// error values are stringifiable in one step.
+					if msg, ok := interp.vm_.MapGet(objHandle, interp.vm_.EncodeString("message")); ok && interp.vm_.IsStringValue(msg) {
+						interp.pop()
+						interp.push(msg)
+						isTargetType = true
+					}
+				}
 			case "bytes":
 				isTargetType = interp.vm_.IsBytesValue(val)
 			case "array":
@@ -935,7 +967,11 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 				}
 			}
 		} else {
-			// Scalar path: check value kind.
+			// Scalar path: `as` converts between scalar kinds when the
+			// conversion is lossless-or-explicit (string<->number, number
+			// formatting), and verifies everything else. This keeps `as` the
+			// single "cast or explain" operator: `is` stays the pure type
+			// test.
 			if ed := interp.vm_.EnumReg().GetEnum(typeName); ed != nil {
 				// Enum target: a value already tagged with this enum passes
 				// through; a plain int is accepted only if it is a member of
@@ -973,6 +1009,11 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 				// Enum source, int target: untag to the underlying value.
 				interp.pop()
 				interp.push(vm.EncodeInt(vm.DecodeEnumValue(val)))
+		} else {
+			converted, convertedOK, why := convertScalarAs(interp, val, typeName)
+			if convertedOK {
+				interp.pop()
+				interp.push(converted)
 			} else {
 				var ok bool
 				switch typeName {
@@ -994,14 +1035,20 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 					ok = false
 				}
 				if !ok {
+					msg := fmt.Sprintf("type cast failed: value is not %s (as verifies same-kind values; cross-kind scalar conversion applies to string<->number only)", typeName)
+					if why != "" {
+						msg = fmt.Sprintf("type cast failed: cannot convert to %s: %s", typeName, why)
+					}
 					return vm.EncodeInt(0), false, &RuntimeError{
-						Code:    "type_cast_failed",
-						Path:    "vm/type/cast",
-						Target:  typeName,
-						Message: fmt.Sprintf("type cast failed: value is not %s", typeName),
+						Code:     "type_cast_failed",
+						Path:     "vm/type/cast",
+						Target:   typeName,
+						Message:  msg,
+						Expected: typeName,
 					}
 				}
 			}
+		}
 		}
 		// Cast succeeds; leave value on stack.
 
@@ -1197,6 +1244,19 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 		interp.vm_.MapSet(mapHandle, key, val)
 		interp.push(val)
 
+	case opMapGetDefault:
+		// Stack: [map, key, default] — missing key yields the default
+		// instead of raising map_key_not_found.
+		defaultVal := interp.pop()
+		key := interp.pop()
+		mapVal := interp.pop()
+		mapHandle := vm.DecodeHandle(mapVal)
+		if value, ok := interp.vm_.MapGet(mapHandle, key); ok {
+			interp.push(value)
+		} else {
+			interp.push(defaultVal)
+		}
+
 	case opMapSet:
 		val := interp.pop()
 		key := interp.pop()
@@ -1247,6 +1307,96 @@ func (interp *Interpreter) executeInstruction(inst instruction) (vm.Value, bool,
 	}
 
 	return vm.EncodeInt(0), false, nil
+}
+
+// convertScalarAs performs the cross-kind scalar conversions `as` supports:
+// numbers/bools render to string, numeric strings parse to numbers, and
+// "true"/"false" parse to bool. Same-kind values pass through untouched (ok is
+// false and the caller's verify path handles them). Null never converts.
+// When a conversion was attempted but failed (e.g. unparseable numeric
+// string), why carries the reason for the diagnostic.
+func convertScalarAs(interp *Interpreter, val vm.Value, typeName string) (vm.Value, bool, string) {
+	if vm.IsNull(val) {
+		return val, false, ""
+	}
+	switch typeName {
+	case "string":
+		switch {
+		case vm.IsInt(val):
+			return interp.vm_.EncodeString(fmt.Sprintf("%d", vm.DecodeInt(val))), true, ""
+		case vm.IsLong(val):
+			return interp.vm_.EncodeString(fmt.Sprintf("%d", interp.vm_.DecodeLong(val))), true, ""
+		case vm.IsFloat(val):
+			return interp.vm_.EncodeString(fmt.Sprintf("%v", vm.DecodeFloat(val))), true, ""
+		case vm.IsDouble(val):
+			return interp.vm_.EncodeString(fmt.Sprintf("%v", interp.vm_.DecodeDouble(val))), true, ""
+		case vm.IsBool(val):
+			return interp.vm_.EncodeString(fmt.Sprintf("%t", vm.DecodeBool(val))), true, ""
+		}
+	case "int", "int32":
+		switch {
+		case vm.IsFloat(val):
+			f := vm.DecodeFloat(val)
+			if f > 2147483647 || f < -2147483648 {
+				return val, false, fmt.Sprintf("float %v overflows int", f)
+			}
+			return vm.EncodeInt(int32(f)), true, ""
+		case vm.IsDouble(val):
+			d := interp.vm_.DecodeDouble(val)
+			if d > 2147483647 || d < -2147483648 {
+				return val, false, fmt.Sprintf("float %v overflows int", d)
+			}
+			return vm.EncodeInt(int32(d)), true, ""
+		case vm.IsString(val):
+			s := interp.vm_.DecodeString(val)
+			n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+			if err != nil || n > 2147483647 || n < -2147483648 {
+				return val, false, fmt.Sprintf("%q is not a valid int literal", s)
+			}
+			return vm.EncodeInt(int32(n)), true, ""
+		}
+	case "int64", "long":
+		if vm.IsString(val) {
+			s := interp.vm_.DecodeString(val)
+			n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+			if err != nil {
+				return val, false, fmt.Sprintf("%q is not a valid long literal", s)
+			}
+			return vm.EncodeLong(n, interp.vm_), true, ""
+		}
+	case "float", "float32", "double", "float64":
+		var f float64
+		switch {
+		case vm.IsInt(val):
+			f = float64(vm.DecodeInt(val))
+		case vm.IsLong(val):
+			f = float64(interp.vm_.DecodeLong(val))
+		case vm.IsString(val):
+			s := interp.vm_.DecodeString(val)
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+			if err != nil {
+				return val, false, fmt.Sprintf("%q is not a valid float literal", s)
+			}
+			f = parsed
+		default:
+			return val, false, ""
+		}
+		if typeName == "float" || typeName == "float32" {
+			return vm.EncodeFloat(float32(f)), true, ""
+		}
+		return vm.EncodeDouble(f, interp.vm_), true, ""
+	case "bool":
+		if vm.IsString(val) {
+			switch strings.TrimSpace(interp.vm_.DecodeString(val)) {
+			case "true":
+				return vm.EncodeBool(true), true, ""
+			case "false":
+				return vm.EncodeBool(false), true, ""
+			}
+			return val, false, fmt.Sprintf("%q is not a valid bool literal (use \"true\"/\"false\")", interp.vm_.DecodeString(val))
+		}
+	}
+	return val, false, ""
 }
 
 // castMapToStruct recursively converts a map handle to a struct instance.

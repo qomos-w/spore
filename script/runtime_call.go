@@ -136,9 +136,9 @@ func (rt *Runtime) callStageContext(ctx context.Context, budget binding.Executio
 		return Result{Error: runtimeErrorFromOutcome(outcome)}, nil
 	}
 	if outcome.Payload == nil {
-		return Result{}, nil
+		return Result{Usage: outcome.Usage}, nil
 	}
-	return Result{Value: outcome.Payload.Value}, nil
+	return Result{Value: outcome.Payload.Value, Usage: outcome.Usage}, nil
 }
 
 // CallableHandle is a host-facing handle that pre-resolves a callable lookup

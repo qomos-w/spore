@@ -107,6 +107,7 @@ undefined_function	runtime	VM attempted to call an undefined function	确认函�
 undefined_imported_variable	schema	Referenced imported variable was not found	确认 import 的符号名称正确且已导出
 undefined_native_callable	runtime	VM attempted to call an undefined native callable	确认 native callable 已在绑定层注册
 undefined_variable	schema	Referenced variable was not defined	在使用前声明变量，或修正变量名
+unknown_array_method	runtime	A method call targeted an array receiver but the method name is not an array builtin	数组的方法形式仅支持 push；其他操作请使用 push/len 等内建函数
 unknown_enum	schema	Enum referenced in code was not declared	确认 enum 名称正确且已在当前模块或导入模块中声明
 unknown_enum_member	schema	Enum member referenced was not part of the enum's closed set	将成员名改为 enum 中已声明的成员
 unknown_interface	schema	Implemented interface could not be found	确认 interface 名称正确且已声明或导入

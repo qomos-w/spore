@@ -324,6 +324,19 @@ type nullCoalesceExpr struct {
 func (n *nullCoalesceExpr) pos() (int, int) { return n.tok.line, n.tok.col }
 func (n *nullCoalesceExpr) exprNode()       {}
 
+// ternaryExpr is `Cond ? Then : Else`. Both branches evaluate lazily; the
+// expression yields exactly one of them. Right-associative and chainable
+// (`a ? b : c ? d : e` groups as `a ? b : (c ? d : e)`).
+type ternaryExpr struct {
+	tok   token
+	Cond  expression
+	Then  expression
+	Else  expression
+}
+
+func (n *ternaryExpr) pos() (int, int) { return n.tok.line, n.tok.col }
+func (n *ternaryExpr) exprNode()       {}
+
 // optionalChainExpr wraps a postfix chain that contains at least one `?.`
 // link (member access, method call, index access). The wrapper delimits the
 // short-circuit region: when any optional link's receiver is null, control

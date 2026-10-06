@@ -28,6 +28,7 @@ const (
 	_ int = iota
 	lowestPrec
 	assignPrec   // =
+	ternaryPrec  // ?: (below assignment, above ??)
 	coalescePrec // ?? (below ||, above assignment)
 	orPrec       // ||
 	andPrec      // &&
@@ -43,6 +44,7 @@ const (
 
 var precedences = map[tokenType]int{
 	tokEq:               assignPrec,
+	tokQuestion:         ternaryPrec,
 	tokQuestionQuestion: coalescePrec,
 	tokOr:               orPrec,
 	tokAnd:              andPrec,

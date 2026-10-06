@@ -2073,12 +2073,15 @@ func TestMilestone_Phase13_ErrorOutcomeStructuralEquivalence(t *testing.T) {
 }
 
 func TestMilestone_Phase13_ScriptCallableDiagnosticCodePropagates(t *testing.T) {
-	// Script callable with type-cast failure produces structured DiagnosticCode
-	scriptSB, _ := setupVMBinding(t, `fun bad_cast(x: int): string { return x as string }`)
+	// Script callable with a genuinely failing type-cast (string to int with
+	// unparseable input) produces a structured DiagnosticCode. Note: `int as
+	// string` is now a valid scalar conversion (returns "42"); use a value
+	// that cannot convert to exercise the failure path.
+	scriptSB, _ := setupVMBinding(t, `fun bad_cast(x: string): int { return x as int }`)
 	outcome, err := scriptSB.Invoke(binding.InvocationRequest{
 		Callable: "bad_cast",
 		Stage:    binding.InvocationStageUnary,
-		Args:     []any{42},
+		Args:     []any{"not-a-number"},
 	})
 	if err != nil {
 		t.Fatalf("Invoke bad_cast: %v", err)

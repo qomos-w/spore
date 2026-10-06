@@ -15,6 +15,49 @@ import (
 // host might write to feed source from any storage layer.
 type mapResolver map[string]string
 
+func TestResultUsageReportsVMCost(t *testing.T) {
+	rt, err := script.NewRuntime()
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	err = rt.LoadSource("usage", `
+fun spin(n: int): int {
+	var acc: int = 0
+	var i: int = 0
+	while (i < n) {
+		acc = acc + i
+		i = i + 1
+	}
+	return acc
+}
+export fun run(): int {
+	return spin(5000)
+}
+`)
+	if err != nil {
+		t.Fatalf("LoadSource: %v", err)
+	}
+	res, err := rt.Call("run")
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if res.Error != nil {
+		t.Fatalf("script error: %v", res.Error)
+	}
+	if res.Usage == nil {
+		t.Fatal("Usage is nil for a VM-backed call")
+	}
+	t.Logf("usage: %+v", *res.Usage)
+	if res.Usage.Instructions == 0 {
+		t.Fatalf("Instructions not counted, got %d", res.Usage.Instructions)
+	}
+	// DurationNanos granularity is platform-clock dependent; on Windows a
+	// sub-tick VM call can legitimately report 0. Assert non-negative only.
+	if res.Usage.DurationNanos < 0 {
+		t.Fatalf("DurationNanos negative, got %d", res.Usage.DurationNanos)
+	}
+}
+
 func (m mapResolver) ResolveModule(path string) (string, error) {
 	src, ok := m[path]
 	if !ok {

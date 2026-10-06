@@ -33,6 +33,12 @@ type ContextScriptRuntimeBackend interface {
 	EvaluateContext(ctx context.Context, budget invoke.ExecutionBudget, callable string, stage invoke.InvocationStage, args []any) (any, error)
 }
 
+// UsageReportingBackend is implemented by VM backends that can report the
+// measured cost of the most recent EvaluateContext.
+type UsageReportingBackend interface {
+	LastUsage() invoke.InvocationUsage
+}
+
 func runtimeBackendFromVMLowering(backend VMLoweringBackend) ScriptRuntimeBackend {
 	if backend == nil {
 		return nil

@@ -155,6 +155,7 @@ const (
 	opMapLen
 	opMapGetString
 	opMapSetString
+	opMapGetDefault
 	opNewStructInstance
 
 	// Debug
@@ -412,6 +413,7 @@ var opcodeNames = map[opcode]string{
 	opMapLen:                    "MAP_LEN",
 	opMapGetString:              "MAP_GET_STRING",
 	opMapSetString:              "MAP_SET_STRING",
+	opMapGetDefault:             "MAP_GET_DEFAULT",
 	opNewStructInstance:         "NEW_STRUCT_INSTANCE",
 	opSetLine:                   "SET_LINE",
 	opHalt:                      "HALT",

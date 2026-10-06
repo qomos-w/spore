@@ -309,6 +309,21 @@ func (c *compiler) compileNewExpr(e *frontend.NewExpr) {
 	classNameIdx := c.chunk.addConstant(e.ClassName)
 	c.emit(opNewObject, int32(classNameIdx), c.curLine)
 
+	// Container-typed fields (array<T>/map<K,V>, own or inherited) zero-init
+	// to empty containers instead of raw zero memory: pushing into an
+	// uninitialized field would otherwise dereference a null handle.
+	for _, f := range c.collectContainerFields(e.ClassName) {
+		fieldIdx := c.chunk.addConstant(f.name)
+		c.emit(opDup, 0, c.curLine)
+		if f.containerKind == "map" {
+			c.emit(opNewMap, 0, c.curLine)
+		} else {
+			c.emit(opNewArray, 0, c.curLine)
+		}
+		c.emit(opSetField, int32(fieldIdx), c.curLine)
+		c.emit(opPop, 0, c.curLine) // opSetField yields the value; discard it
+	}
+
 	// Two-step: allocate + call constructor when one is declared.
 	if c.classHasConstructor(e.ClassName) {
 		c.emit(opDup, 0, c.curLine)
@@ -333,6 +348,39 @@ func (c *compiler) classHasConstructor(className string) bool {
 		}
 	}
 	return false
+}
+
+type containerField struct {
+	name          string
+	containerKind string // "array" or "map"
+}
+
+// collectContainerFields walks the class and its ancestor chain, returning
+// every field whose declared type is an array or map (bare or generic).
+func (c *compiler) collectContainerFields(className string) []containerField {
+	var out []containerField
+	seen := map[string]bool{}
+	for name := className; name != ""; {
+		info, ok := c.classes[name]
+		if !ok {
+			break
+		}
+		for _, f := range info.fields {
+			if seen[f.name] {
+				continue
+			}
+			resolved := c.resolveType(f.typeName)
+			if resolved == "array" || strings.HasPrefix(resolved, "array<") {
+				seen[f.name] = true
+				out = append(out, containerField{name: f.name, containerKind: "array"})
+			} else if resolved == "map" || strings.HasPrefix(resolved, "map<") {
+				seen[f.name] = true
+				out = append(out, containerField{name: f.name, containerKind: "map"})
+			}
+		}
+		name = info.parent
+	}
+	return out
 }
 
 func (c *compiler) compileSuperExpr(e *frontend.SuperExpr) {

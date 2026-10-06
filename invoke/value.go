@@ -32,6 +32,21 @@ type ValueCarrier struct {
 type InvocationOutcome struct {
 	Result  InvocationResultDesc
 	Payload *ValueCarrier
+	// Usage reports the measured cost of producing this outcome, when the
+	// backend supports it. Zero when unavailable.
+	Usage *InvocationUsage
+}
+
+// InvocationUsage quantifies one invocation's execution cost.
+// Contract: public semantic contract — usage accounting for invocation telemetry.
+type InvocationUsage struct {
+	// Instructions counts executed VM instructions. Zero for native
+	// callables that never enter the VM.
+	Instructions uint64
+	// HostCalls counts host/dispatch calls made during the invocation.
+	HostCalls uint32
+	// DurationNanos is the wall-clock nanoseconds of the invocation.
+	DurationNanos int64
 }
 
 // NewValueCarrier creates a ValueCarrier from a Go value, inferring its kind.
@@ -47,16 +62,23 @@ func NewValueCarrier(value any) *ValueCarrier {
 // and an optional payload. Error results cannot carry payloads.
 // Contract: public semantic contract — invocation outcome construction.
 func NewInvocationOutcome(result InvocationResultDesc, payload any) (InvocationOutcome, error) {
+	return NewInvocationOutcomeWithUsage(result, payload, nil)
+}
+
+// NewInvocationOutcomeWithUsage is NewInvocationOutcome with usage telemetry.
+// A nil usage yields an outcome with a zero Usage pointer.
+// Contract: public semantic contract — invocation outcome construction with telemetry.
+func NewInvocationOutcomeWithUsage(result InvocationResultDesc, payload any, usage *InvocationUsage) (InvocationOutcome, error) {
 	if result.Kind == InvocationResultError {
 		if payload != nil {
 			return InvocationOutcome{}, fmt.Errorf("invocation error result cannot carry payload")
 		}
-		return InvocationOutcome{Result: result, Payload: nil}, nil
+		return InvocationOutcome{Result: result, Payload: nil, Usage: usage}, nil
 	}
 	if err := validateInvocationPayload(result.Value, payload); err != nil {
 		return InvocationOutcome{}, err
 	}
-	return InvocationOutcome{Result: result, Payload: NewValueCarrier(payload)}, nil
+	return InvocationOutcome{Result: result, Payload: NewValueCarrier(payload), Usage: usage}, nil
 }
 
 func validateInvocationPayload(expected *schema.TypeDesc, payload any) error {
